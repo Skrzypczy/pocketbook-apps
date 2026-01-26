@@ -29,7 +29,7 @@ if errorlevel 1 (
 echo Building AISearch.app...
 docker run --rm -v "%cd%:/src" -w /src --entrypoint sh ^
   larento/pocketbook-sdk:5.19-a13 ^
-  -c "export LD_LIBRARY_PATH=/sdk/usr/lib && /sdk/usr/bin/arm-obreey-linux-gnueabi-gcc -I/sdk/usr/arm-obreey-linux-gnueabi/sysroot/usr/include/freetype2 apps/AISearch/AISearch.c -o build/AISearch.app -linkview"
+  -c "export LD_LIBRARY_PATH=/sdk/usr/lib && /sdk/usr/bin/arm-obreey-linux-gnueabi-gcc -I/sdk/usr/arm-obreey-linux-gnueabi/sysroot/usr/include/freetype2 apps/AISearch/AISearch.c -o build/AISearch.app -linkview -lsqlite3"
 if errorlevel 1 (
     echo   FAILED
 ) else (

@@ -113,11 +113,21 @@ AI-powered book recommendation app using Google Gemini API.
 | Feature | Description |
 |---------|-------------|
 | **AI Recommendations** | Uses Gemini 2.0 Flash for book suggestions |
-| **Library Aware** | Reads your Calibre `My books.xml` export |
+| **Device Library** | Reads books directly from PocketBook's database |
+| **Calibre Fallback** | Falls back to Calibre XML if database unavailable |
 | **Natural Language** | Ask in plain English for book suggestions |
 | **Native Networking** | Uses PocketBook APIs (no external libs) |
 | **Battery Efficient** | Network only on-demand, proper power management |
 | **Secure API Key** | Key stored in separate file, not hardcoded |
+
+### How It Works
+
+1. **Primary**: Reads from PocketBook's internal SQLite database
+   - Location: `/mnt/ext1/system/explorer-3/explorer-3.db`
+   - No setup needed - uses books already on your device
+   
+2. **Fallback**: If database unavailable, uses Calibre XML export
+   - Location: `/mnt/ext1/My books.xml`
 
 ### Setup (Required)
 
@@ -132,10 +142,9 @@ Paste your Gemini API key into this file (just the key, nothing else).
 - Or: https://aistudio.google.com/apikey
 - Create a new API key for Gemini
 
-**3. Export Your Library:**
-- In Calibre: Right-click library → Export catalog → XML
-- Save as `My books.xml`
-- Copy to PocketBook root (`/mnt/ext1/`)
+**3. Books (Optional):**
+- Books on device are detected automatically!
+- Or export Calibre library as `My books.xml` to device root
 
 ### Configuration
 

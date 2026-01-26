@@ -3,11 +3,13 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <sqlite3.h>
 
 // --- CONFIGURATION ---
 #define GEMINI_API_KEY_FILE "/mnt/ext1/.ai_api_key"  // Store API key in separate file
 #define GEMINI_URL_BASE "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="
-#define BOOKS_XML_PATH "/mnt/ext1/My books.xml"
+#define BOOKS_DB_PATH "/mnt/ext1/system/explorer-3/explorer-3.db"
+#define BOOKS_XML_PATH "/mnt/ext1/My books.xml"  // Fallback
 #define MAX_QUERY_LEN 256
 #define MAX_RESPONSE_LEN 4096
 #define MAX_BOOKS_CONTEXT 8000
@@ -70,24 +72,108 @@ static int LoadApiKey() {
     return 0;
 }
 
-// Extract book info from XML and build context string
-static void LoadBooksContext() {
+// Load books from PocketBook's SQLite database
+static int LoadBooksFromDatabase() {
+    sqlite3 *db = NULL;
+    sqlite3_stmt *stmt = NULL;
+    int book_count = 0;
+    int context_len = 0;
+    
+    // Try to open the explorer database
+    if (sqlite3_open_v2(BOOKS_DB_PATH, &db, SQLITE_OPEN_READONLY, NULL) != SQLITE_OK) {
+        return -1;  // Database not found or can't open
+    }
+    
+    // Start building context
+    context_len = snprintf(books_context, sizeof(books_context), 
+        "Books on device (from PocketBook database):\n");
+    
+    // Try common table/column names for PocketBook's explorer database
+    // The schema typically has: books_impl or files table with title, authors, filename
+    const char *queries[] = {
+        // Most likely schema for recent PocketBook firmware
+        "SELECT title, authors, filename FROM books_impl WHERE title IS NOT NULL LIMIT 500",
+        // Alternative schema
+        "SELECT title, author, path FROM books WHERE title IS NOT NULL LIMIT 500",
+        // Fallback - try to get any book-like data
+        "SELECT name, '' as author, path FROM files WHERE type=1 LIMIT 500",
+        NULL
+    };
+    
+    int query_success = 0;
+    for (int q = 0; queries[q] != NULL && !query_success; q++) {
+        if (sqlite3_prepare_v2(db, queries[q], -1, &stmt, NULL) == SQLITE_OK) {
+            while (sqlite3_step(stmt) == SQLITE_ROW && context_len < MAX_BOOKS_CONTEXT - 300) {
+                const char *title = (const char *)sqlite3_column_text(stmt, 0);
+                const char *author = (const char *)sqlite3_column_text(stmt, 1);
+                
+                if (title && strlen(title) > 0) {
+                    int added = snprintf(books_context + context_len,
+                        sizeof(books_context) - context_len,
+                        "- \"%s\" by %s\n",
+                        title,
+                        (author && strlen(author) > 0) ? author : "Unknown");
+                    
+                    if (added > 0) {
+                        context_len += added;
+                        book_count++;
+                        query_success = 1;
+                    }
+                }
+            }
+            sqlite3_finalize(stmt);
+            stmt = NULL;
+        }
+    }
+    
+    // If no standard query worked, try to discover schema and dump what we find
+    if (!query_success) {
+        // Get list of tables
+        const char *schema_query = "SELECT name FROM sqlite_master WHERE type='table'";
+        if (sqlite3_prepare_v2(db, schema_query, -1, &stmt, NULL) == SQLITE_OK) {
+            context_len += snprintf(books_context + context_len,
+                sizeof(books_context) - context_len,
+                "(Database schema discovery - tables found: ");
+            
+            while (sqlite3_step(stmt) == SQLITE_ROW) {
+                const char *table = (const char *)sqlite3_column_text(stmt, 0);
+                if (table) {
+                    context_len += snprintf(books_context + context_len,
+                        sizeof(books_context) - context_len, "%s, ", table);
+                }
+            }
+            context_len += snprintf(books_context + context_len,
+                sizeof(books_context) - context_len, ")\n");
+            sqlite3_finalize(stmt);
+        }
+    }
+    
+    sqlite3_close(db);
+    
+    if (book_count > 0) {
+        snprintf(status_msg, sizeof(status_msg), "Loaded %d books from device", book_count);
+    }
+    
+    return book_count;
+}
+
+// Fallback: Load from Calibre XML export
+static int LoadBooksFromXML() {
     FILE *fp = fopen(BOOKS_XML_PATH, "r");
     if (!fp) {
-        snprintf(books_context, sizeof(books_context), "No books found.");
-        return;
+        return -1;
     }
     
     char line[512];
     char title[256] = {0};
     char author[256] = {0};
-    char comments[512] = {0};
     int book_count = 0;
-    int context_len = 0;
+    int context_len = strlen(books_context);  // Append to existing context
     
-    // Start building context
-    context_len = snprintf(books_context, sizeof(books_context), 
-        "Available books in user's library:\n");
+    if (context_len == 0) {
+        context_len = snprintf(books_context, sizeof(books_context), 
+            "Books from Calibre library:\n");
+    }
     
     while (fgets(line, sizeof(line), fp) && context_len < MAX_BOOKS_CONTEXT - 500) {
         // Extract title
@@ -136,7 +222,30 @@ static void LoadBooksContext() {
     }
     
     fclose(fp);
-    snprintf(status_msg, sizeof(status_msg), "Loaded %d books", book_count);
+    return book_count;
+}
+
+// Main book loading function - tries database first, then XML fallback
+static void LoadBooksContext() {
+    int count = 0;
+    
+    // Clear context
+    books_context[0] = '\0';
+    
+    // Try PocketBook database first
+    count = LoadBooksFromDatabase();
+    
+    if (count <= 0) {
+        // Fallback to Calibre XML
+        count = LoadBooksFromXML();
+        if (count > 0) {
+            snprintf(status_msg, sizeof(status_msg), "Loaded %d books from XML", count);
+        } else {
+            snprintf(books_context, sizeof(books_context), 
+                "No books found. The AI will provide general recommendations.");
+            snprintf(status_msg, sizeof(status_msg), "No book database found");
+        }
+    }
 }
 
 // Escape string for JSON (with proper bounds checking)
