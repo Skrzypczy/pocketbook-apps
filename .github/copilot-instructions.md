@@ -34,7 +34,8 @@ PocketBook e-reader applications written in C using the native inkview SDK. Targ
 ### Error Handling
 - Return -1 for errors, 0 for success
 - Set meaningful status messages for user feedback
-- Don't crash on errors - gracefully degrade
+- Don't crash on errors - show clear error message to user
+- **NO FALLBACKS**: Main features must work correctly; don't add fallback code paths that hide failures
 
 ### PocketBook-Specific Patterns
 

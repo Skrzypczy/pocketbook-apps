@@ -114,7 +114,6 @@ AI-powered book recommendation app using Google Gemini API.
 |---------|-------------|
 | **AI Recommendations** | Uses Gemini 2.0 Flash for book suggestions |
 | **Device Library** | Reads books directly from PocketBook's database |
-| **Calibre Fallback** | Falls back to Calibre XML if database unavailable |
 | **Natural Language** | Ask in plain English for book suggestions |
 | **Native Networking** | Uses PocketBook APIs (no external libs) |
 | **Battery Efficient** | Network only on-demand, proper power management |
@@ -122,12 +121,9 @@ AI-powered book recommendation app using Google Gemini API.
 
 ### How It Works
 
-1. **Primary**: Reads from PocketBook's internal SQLite database
+1. Reads from PocketBook's internal SQLite database
    - Location: `/mnt/ext1/system/explorer-3/explorer-3.db`
    - No setup needed - uses books already on your device
-   
-2. **Fallback**: If database unavailable, uses Calibre XML export
-   - Location: `/mnt/ext1/My books.xml`
 
 ### Setup (Required)
 
@@ -142,9 +138,8 @@ Paste your Gemini API key into this file (just the key, nothing else).
 - Or: https://aistudio.google.com/apikey
 - Create a new API key for Gemini
 
-**3. Books (Optional):**
-- Books on device are detected automatically!
-- Or export Calibre library as `My books.xml` to device root
+**3. Books:**
+- Books on device are detected automatically from PocketBook database
 
 ### Configuration
 
@@ -152,7 +147,7 @@ Edit these values in `AISearch.c` before building:
 
 ```c
 #define GEMINI_API_KEY_FILE "/mnt/ext1/.ai_api_key"   // API key file location
-#define BOOKS_XML_PATH "/mnt/ext1/My books.xml"       // Calibre export path
+#define BOOKS_DB_PATH "/mnt/ext1/system/explorer-3/explorer-3.db"  // PocketBook database
 ```
 
 ### Usage
@@ -172,7 +167,7 @@ Edit these values in `AISearch.c` before building:
 
 - WiFi connection for API calls
 - Valid Google Gemini API key (in `/mnt/ext1/.ai_api_key`)
-- Calibre library exported as XML
+- Books on device (detected automatically)
 
 ---
 
@@ -203,7 +198,6 @@ Edit these values in `AISearch.c` before building:
 For AI Search:
 ```
 /mnt/ext1/.ai_api_key      # Your Gemini API key
-/mnt/ext1/My books.xml     # Calibre library export
 ```
 
 For Vault:

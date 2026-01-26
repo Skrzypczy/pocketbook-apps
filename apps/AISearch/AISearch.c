@@ -9,7 +9,6 @@
 #define GEMINI_API_KEY_FILE "/mnt/ext1/.ai_api_key"  // Store API key in separate file
 #define GEMINI_URL_BASE "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="
 #define BOOKS_DB_PATH "/mnt/ext1/system/explorer-3/explorer-3.db"
-#define BOOKS_XML_PATH "/mnt/ext1/My books.xml"  // Fallback
 #define MAX_QUERY_LEN 256
 #define MAX_RESPONSE_LEN 4096
 #define MAX_BOOKS_CONTEXT 8000
@@ -157,94 +156,17 @@ static int LoadBooksFromDatabase() {
     return book_count;
 }
 
-// Fallback: Load from Calibre XML export
-static int LoadBooksFromXML() {
-    FILE *fp = fopen(BOOKS_XML_PATH, "r");
-    if (!fp) {
-        return -1;
-    }
-    
-    char line[512];
-    char title[256] = {0};
-    char author[256] = {0};
-    int book_count = 0;
-    int context_len = strlen(books_context);  // Append to existing context
-    
-    if (context_len == 0) {
-        context_len = snprintf(books_context, sizeof(books_context), 
-            "Books from Calibre library:\n");
-    }
-    
-    while (fgets(line, sizeof(line), fp) && context_len < MAX_BOOKS_CONTEXT - 500) {
-        // Extract title
-        char *title_start = strstr(line, "<title");
-        if (title_start) {
-            char *content_start = strchr(title_start, '>');
-            if (content_start) {
-                content_start++;
-                char *content_end = strstr(content_start, "</title>");
-                if (content_end) {
-                    int len = content_end - content_start;
-                    if (len > 0 && len < 255) {
-                        strncpy(title, content_start, len);
-                        title[len] = '\0';
-                    }
-                }
-            }
-        }
-        
-        // Extract author
-        char *author_start = strstr(line, "<author>");
-        if (author_start) {
-            author_start += 8;
-            char *author_end = strstr(author_start, "</author>");
-            if (author_end) {
-                int len = author_end - author_start;
-                if (len > 0 && len < 255) {
-                    strncpy(author, author_start, len);
-                    author[len] = '\0';
-                }
-            }
-        }
-        
-        // End of record - add to context
-        if (strstr(line, "</record>") && title[0] != '\0') {
-            int added = snprintf(books_context + context_len, 
-                sizeof(books_context) - context_len,
-                "- \"%s\" by %s\n", 
-                title, author[0] ? author : "Unknown");
-            
-            if (added > 0) context_len += added;
-            book_count++;
-            title[0] = '\0';
-            author[0] = '\0';
-        }
-    }
-    
-    fclose(fp);
-    return book_count;
-}
-
-// Main book loading function - tries database first, then XML fallback
+// Load books from PocketBook database
 static void LoadBooksContext() {
-    int count = 0;
-    
     // Clear context
     books_context[0] = '\0';
     
-    // Try PocketBook database first
-    count = LoadBooksFromDatabase();
+    int count = LoadBooksFromDatabase();
     
     if (count <= 0) {
-        // Fallback to Calibre XML
-        count = LoadBooksFromXML();
-        if (count > 0) {
-            snprintf(status_msg, sizeof(status_msg), "Loaded %d books from XML", count);
-        } else {
-            snprintf(books_context, sizeof(books_context), 
-                "No books found. The AI will provide general recommendations.");
-            snprintf(status_msg, sizeof(status_msg), "No book database found");
-        }
+        snprintf(books_context, sizeof(books_context), 
+            "No books found. The AI will provide general recommendations.");
+        snprintf(status_msg, sizeof(status_msg), "No book database found");
     }
 }
 
