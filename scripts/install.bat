@@ -91,8 +91,7 @@ echo.
 echo Next steps:
 echo   1. Safely eject PocketBook
 echo   2. Apps will appear in Applications menu
-echo   3. For AISearch: export Calibre library to
-echo      "My books.xml" and copy to device root
+echo   3. AISearch reads books directly from device database
 echo.
 popd
 pause

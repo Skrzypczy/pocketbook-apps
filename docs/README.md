@@ -253,8 +253,6 @@ pocketbook-apps/
 ├── docs/                    # Documentation
 │   ├── README.md
 │   └── CONTRIBUTING.md
-├── samples/                 # Sample data
-│   └── My books.xml
 ├── scripts/                 # Build & install scripts
 │   ├── build.bat
 │   └── install.bat

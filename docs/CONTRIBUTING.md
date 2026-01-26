@@ -37,8 +37,6 @@ pocketbook-apps/
 ├── docs/
 │   ├── README.md                 # User documentation
 │   └── CONTRIBUTING.md           # This file
-├── samples/
-│   └── My books.xml              # Sample Calibre export
 ├── scripts/
 │   ├── build.bat                 # Docker build script
 │   └── install.bat               # Device installer
