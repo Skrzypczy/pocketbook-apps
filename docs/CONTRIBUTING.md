@@ -27,21 +27,33 @@
 pocketbook-apps/
 ├── .github/
 │   └── copilot-instructions.md   # AI assistant guidelines
-├── Vault.c                       # Secure folder locker
-├── AISearch.c                    # AI book recommendations
-├── build.bat                     # Docker build script
-├── install.bat                   # Device installer
-├── .ai_api_key                   # Gemini API key
-├── .gitignore                    # Excludes *.app files
-├── README.md                     # User documentation
-├── CONTRIBUTING.md               # This file
-└── My books.xml                  # Sample Calibre export
+├── apps/
+│   ├── Vault/
+│   │   └── Vault.c               # Secure folder locker
+│   └── AISearch/
+│       └── AISearch.c            # AI book recommendations
+├── config/
+│   └── .ai_api_key               # Gemini API key (edit this)
+├── docs/
+│   ├── README.md                 # User documentation
+│   └── CONTRIBUTING.md           # This file
+├── samples/
+│   └── My books.xml              # Sample Calibre export
+├── scripts/
+│   ├── build.bat                 # Docker build script
+│   └── install.bat               # Device installer
+├── build/                        # Build outputs (git-ignored)
+│   ├── Vault.app
+│   └── AISearch.app
+└── .gitignore
 ```
 
 ### Build Commands
 ```bash
-# Build both apps
-./build.bat
+# Build both apps (from repo root)
+scripts\build.bat
+
+# Output goes to build\ folder
 
 # Manual build (single app)
 docker run --rm -v "$(pwd):/src" -w /src --entrypoint sh \
@@ -49,7 +61,7 @@ docker run --rm -v "$(pwd):/src" -w /src --entrypoint sh \
   -c "export LD_LIBRARY_PATH=/sdk/usr/lib && \
       /sdk/usr/bin/arm-obreey-linux-gnueabi-gcc \
       -I/sdk/usr/arm-obreey-linux-gnueabi/sysroot/usr/include/freetype2 \
-      AppName.c -o AppName.app -linkview"
+      apps/AppName/AppName.c -o build/AppName.app -linkview"
 ```
 
 ---

@@ -169,23 +169,25 @@ Edit these values in `AISearch.c` before building:
 
 ## Installation
 
-### Method 1: Copy to Applications Folder
+### Method 1: Use Install Script (Recommended)
+
+1. Build the apps first: `scripts\build.bat`
+2. Connect PocketBook via USB (select "USB Drive" mode)
+3. Run: `scripts\install.bat`
+4. Safely eject PocketBook
+5. Apps appear in Applications menu
+
+### Method 2: Manual Copy
 
 1. Connect PocketBook to computer via USB
 2. Navigate to internal storage
-3. Copy `.app` files to `/applications/` folder:
+3. Copy `.app` files from `build\` to `/applications/` folder:
    ```
    /mnt/ext1/applications/Vault.app
    /mnt/ext1/applications/AISearch.app
    ```
-4. Disconnect and restart PocketBook
-5. Apps appear in Applications menu
-
-### Method 2: Direct Execution
-
-1. Copy `.app` files anywhere on device
-2. Use file manager to navigate to the file
-3. Tap to execute
+4. Copy `config\.ai_api_key` to device root as `/.ai_api_key`
+5. Disconnect and restart PocketBook
 
 ### Additional Files
 
@@ -211,24 +213,45 @@ For Vault:
 
 ### Build Commands
 
-Run `build.bat` (Windows) or manually:
-
 ```bash
-# Vault
-docker run --rm -v "$(pwd):/src" -w /src --entrypoint sh \
-  larento/pocketbook-sdk:5.19-a13 \
-  -c "export LD_LIBRARY_PATH=/sdk/usr/lib && \
-      /sdk/usr/bin/arm-obreey-linux-gnueabi-gcc \
-      -I/sdk/usr/arm-obreey-linux-gnueabi/sysroot/usr/include/freetype2 \
-      Vault.c -o Vault.app -linkview"
+# Build both apps (from repo root)
+scripts\build.bat
 
-# AISearch
+# Output: build\Vault.app, build\AISearch.app
+```
+
+Manual build (single app):
+```bash
 docker run --rm -v "$(pwd):/src" -w /src --entrypoint sh \
   larento/pocketbook-sdk:5.19-a13 \
   -c "export LD_LIBRARY_PATH=/sdk/usr/lib && \
       /sdk/usr/bin/arm-obreey-linux-gnueabi-gcc \
       -I/sdk/usr/arm-obreey-linux-gnueabi/sysroot/usr/include/freetype2 \
-      AISearch.c -o AISearch.app -linkview"
+      apps/Vault/Vault.c -o build/Vault.app -linkview"
+```
+
+---
+
+## Repository Structure
+
+```
+pocketbook-apps/
+├── apps/                    # Source code
+│   ├── Vault/Vault.c
+│   └── AISearch/AISearch.c
+├── config/                  # Configuration files
+│   └── .ai_api_key
+├── docs/                    # Documentation
+│   ├── README.md
+│   └── CONTRIBUTING.md
+├── samples/                 # Sample data
+│   └── My books.xml
+├── scripts/                 # Build & install scripts
+│   ├── build.bat
+│   └── install.bat
+├── build/                   # Output (git-ignored)
+└── .github/                 # AI assistant config
+    └── copilot-instructions.md
 ```
 
 ---
