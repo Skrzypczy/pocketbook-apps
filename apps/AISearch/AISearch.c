@@ -85,68 +85,35 @@ static int LoadBooksFromDatabase() {
     
     // Start building context
     context_len = snprintf(books_context, sizeof(books_context), 
-        "Books on device (from PocketBook database):\n");
+        "Books on device:\n");
     
-    // Try common table/column names for PocketBook's explorer database
-    // The schema typically has: books_impl or files table with title, authors, filename
-    const char *queries[] = {
-        // Most likely schema for recent PocketBook firmware
-        "SELECT title, authors, filename FROM books_impl WHERE title IS NOT NULL LIMIT 500",
-        // Alternative schema
-        "SELECT title, author, path FROM books WHERE title IS NOT NULL LIMIT 500",
-        // Fallback - try to get any book-like data
-        "SELECT name, '' as author, path FROM files WHERE type=1 LIMIT 500",
-        NULL
-    };
+    // PocketBook firmware uses books_impl table with title, authors columns
+    const char *query = "SELECT title, authors FROM books_impl WHERE title IS NOT NULL AND title != '' LIMIT 500";
     
-    int query_success = 0;
-    for (int q = 0; queries[q] != NULL && !query_success; q++) {
-        if (sqlite3_prepare_v2(db, queries[q], -1, &stmt, NULL) == SQLITE_OK) {
-            while (sqlite3_step(stmt) == SQLITE_ROW && context_len < MAX_BOOKS_CONTEXT - 300) {
-                const char *title = (const char *)sqlite3_column_text(stmt, 0);
-                const char *author = (const char *)sqlite3_column_text(stmt, 1);
-                
-                if (title && strlen(title) > 0) {
-                    int added = snprintf(books_context + context_len,
-                        sizeof(books_context) - context_len,
-                        "- \"%s\" by %s\n",
-                        title,
-                        (author && strlen(author) > 0) ? author : "Unknown");
-                    
-                    if (added > 0) {
-                        context_len += added;
-                        book_count++;
-                        query_success = 1;
-                    }
-                }
-            }
-            sqlite3_finalize(stmt);
-            stmt = NULL;
-        }
+    if (sqlite3_prepare_v2(db, query, -1, &stmt, NULL) != SQLITE_OK) {
+        sqlite3_close(db);
+        return -1;  // Schema not as expected
     }
     
-    // If no standard query worked, try to discover schema and dump what we find
-    if (!query_success) {
-        // Get list of tables
-        const char *schema_query = "SELECT name FROM sqlite_master WHERE type='table'";
-        if (sqlite3_prepare_v2(db, schema_query, -1, &stmt, NULL) == SQLITE_OK) {
-            context_len += snprintf(books_context + context_len,
+    while (sqlite3_step(stmt) == SQLITE_ROW && context_len < MAX_BOOKS_CONTEXT - 300) {
+        const char *title = (const char *)sqlite3_column_text(stmt, 0);
+        const char *author = (const char *)sqlite3_column_text(stmt, 1);
+        
+        if (title && strlen(title) > 0) {
+            int added = snprintf(books_context + context_len,
                 sizeof(books_context) - context_len,
-                "(Database schema discovery - tables found: ");
+                "- \"%s\" by %s\n",
+                title,
+                (author && strlen(author) > 0) ? author : "Unknown");
             
-            while (sqlite3_step(stmt) == SQLITE_ROW) {
-                const char *table = (const char *)sqlite3_column_text(stmt, 0);
-                if (table) {
-                    context_len += snprintf(books_context + context_len,
-                        sizeof(books_context) - context_len, "%s, ", table);
-                }
+            if (added > 0) {
+                context_len += added;
+                book_count++;
             }
-            context_len += snprintf(books_context + context_len,
-                sizeof(books_context) - context_len, ")\n");
-            sqlite3_finalize(stmt);
         }
     }
     
+    sqlite3_finalize(stmt);
     sqlite3_close(db);
     
     if (book_count > 0) {
