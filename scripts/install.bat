@@ -68,14 +68,27 @@ if errorlevel 1 (
     echo   OK
 )
 
-REM Copy API key for AISearch from config folder
-echo Installing API key...
-copy /Y "config\.ai_api_key" "%POCKETBOOK_DRIVE%\" >nul
+echo Installing Chef.app...
+copy /Y "build\Chef.app" "%POCKETBOOK_DRIVE%\applications\" >nul
 if errorlevel 1 (
-    echo   FAILED - Make sure config\.ai_api_key exists
+    echo   FAILED - Make sure build\Chef.app exists
 ) else (
     echo   OK
 )
+
+REM Copy API key for AISearch from config folder
+echo Installing API key for AISearch...
+copy /Y "config\.ai_api_key" "%POCKETBOOK_DRIVE%\" >nul
+if errorlevel 1 (
+    echo   SKIP - Copy config\.ai_api_key manually if needed
+) else (
+    echo   OK
+)
+
+REM Note about Chef API key
+echo.
+echo NOTE: Chef requires .chef_api_key file on device
+echo   Create %POCKETBOOK_DRIVE%\.chef_api_key with your Gemini API key
 
 echo.
 echo ==========================================
@@ -85,13 +98,14 @@ echo.
 echo Installed to %POCKETBOOK_DRIVE%:
 echo   - applications\Vault.app
 echo   - applications\AISearch.app
-echo   - .ai_api_key
+echo   - applications\Chef.app
+echo   - .ai_api_key (for AISearch)
 echo   - Private\ (folder for Vault)
 echo.
 echo Next steps:
-echo   1. Safely eject PocketBook
-echo   2. Apps will appear in Applications menu
-echo   3. AISearch reads books directly from device database
+echo   1. Create .chef_api_key file on device for Chef app
+echo   2. Safely eject PocketBook
+echo   3. Apps will appear in Applications menu
 echo.
 popd
 pause
