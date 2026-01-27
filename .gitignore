@@ -2,6 +2,10 @@
 build/
 *.app
 
+# Sensitive files - NEVER commit
+config/.ai_api_key
+.ai_api_key
+
 # OS files
 .DS_Store
 Thumbs.db
