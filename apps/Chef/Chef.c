@@ -5,8 +5,8 @@
 #include <time.h>
 
 // --- CONFIGURATION ---
-#define GEMINI_API_KEY_FILE "/mnt/ext1/.chef_api_key"
-#define GEMINI_URL_BASE "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key="
+#define GEMINI_API_KEY_FILE "/mnt/ext1/.ai_api_key"
+#define GEMINI_URL_BASE "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key="
 #define PROFILE_FILE "/mnt/ext1/.chef_profile.json"
 #define COOKBOOK_FILE "/mnt/ext1/.chef_cookbook.json"
 #define MAX_INGREDIENTS_LEN 256

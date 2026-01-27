@@ -76,19 +76,14 @@ if errorlevel 1 (
     echo   OK
 )
 
-REM Copy API key for AISearch from config folder
-echo Installing API key for AISearch...
+REM Copy API key for AI apps from config folder
+echo Installing API key...
 copy /Y "config\.ai_api_key" "%POCKETBOOK_DRIVE%\" >nul
 if errorlevel 1 (
     echo   SKIP - Copy config\.ai_api_key manually if needed
 ) else (
-    echo   OK
+    echo   OK (used by AISearch and Chef)
 )
-
-REM Note about Chef API key
-echo.
-echo NOTE: Chef requires .chef_api_key file on device
-echo   Create %POCKETBOOK_DRIVE%\.chef_api_key with your Gemini API key
 
 echo.
 echo ==========================================
