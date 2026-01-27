@@ -7,7 +7,7 @@
 
 // --- CONFIGURATION ---
 #define GEMINI_API_KEY_FILE "/mnt/ext1/.ai_api_key"  // Store API key in separate file
-#define GEMINI_URL_BASE "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="
+#define GEMINI_URL_BASE "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key="
 #define BOOKS_DB_PATH "/mnt/ext1/system/explorer-3/explorer-3.db"
 #define MAX_QUERY_LEN 256
 #define MAX_RESPONSE_LEN 4096
@@ -180,9 +180,17 @@ static void ParseGeminiResponse(const char *json) {
     // Simple extraction - look for "text": "..."
     const char *text_start = strstr(json, "\"text\"");
     if (!text_start) {
-        // Check for error
-        const char *error = strstr(json, "\"error\"");
-        if (error) {
+        // Check for specific error types
+        if (strstr(json, "RESOURCE_EXHAUSTED") || strstr(json, "429") || strstr(json, "quota")) {
+            snprintf(response_buffer, sizeof(response_buffer), 
+                "Quota exceeded. Free tier allows ~20 requests/day. Try again tomorrow.");
+        } else if (strstr(json, "API_KEY_INVALID") || strstr(json, "401")) {
+            snprintf(response_buffer, sizeof(response_buffer), 
+                "Invalid API key. Check your key at aistudio.google.com/apikey");
+        } else if (strstr(json, "NOT_FOUND") || strstr(json, "404")) {
+            snprintf(response_buffer, sizeof(response_buffer), 
+                "Model not found. API may have changed.");
+        } else if (strstr(json, "\"error\"")) {
             snprintf(response_buffer, sizeof(response_buffer), "API Error. Check key.");
         } else {
             snprintf(response_buffer, sizeof(response_buffer), "No response from AI.");

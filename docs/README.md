@@ -112,7 +112,7 @@ AI-powered book recommendation app using Google Gemini API.
 
 | Feature | Description |
 |---------|-------------|
-| **AI Recommendations** | Uses Gemini 2.0 Flash for book suggestions |
+| **AI Recommendations** | Uses Gemini 2.5 Flash for book suggestions |
 | **Device Library** | Reads books directly from PocketBook's database |
 | **Natural Language** | Ask in plain English for book suggestions |
 | **Native Networking** | Uses PocketBook APIs (no external libs) |
