@@ -280,7 +280,7 @@ static void LoadCookbook() {
                 if (title_start) {
                     title_start++;
                     char *title_end = title_start;
-                    while (*title_end && !(*title_end == '"' && *(title_end - 1) != '\\')) {
+                    while (*title_end && !(*title_end == '"' && title_end > title_start && *(title_end - 1) != '\\')) {
                         title_end++;
                     }
                     size_t len = title_end - title_start;
@@ -300,7 +300,7 @@ static void LoadCookbook() {
                 if (ing_start) {
                     ing_start++;
                     char *ing_end = ing_start;
-                    while (*ing_end && !(*ing_end == '"' && *(ing_end - 1) != '\\')) {
+                    while (*ing_end && !(*ing_end == '"' && ing_end > ing_start && *(ing_end - 1) != '\\')) {
                         ing_end++;
                     }
                     size_t len = ing_end - ing_start;
@@ -324,7 +324,7 @@ static void LoadCookbook() {
                     steps_start++;
                     
                     char *step_end = steps_start;
-                    while (*step_end && !(*step_end == '"' && *(step_end - 1) != '\\')) {
+                    while (*step_end && !(*step_end == '"' && step_end > steps_start && *(step_end - 1) != '\\')) {
                         step_end++;
                     }
                     
@@ -571,7 +571,7 @@ static void GenerateRecipe() {
              "{\"contents\":[{\"parts\":[{\"text\":\"%s\"}]}]}", 
              escaped_prompt);
     
-    // Build URL
+    // Build URL (Note: Gemini API requires key as query parameter)
     char url[512];
     snprintf(url, sizeof(url), "%s%s", GEMINI_URL_BASE, api_key);
     
@@ -729,7 +729,7 @@ static void DrawGenerateTab() {
         int line_pos = 0;
         
         for (char *p = text; *p; p++) {
-            if (line_pos >= 255 || TextRectHeight(max_w, line, 0) > 40) {
+            if (line_pos >= (int)(sizeof(line) - 1) || TextRectHeight(max_w, line, 0) > 40) {
                 line[line_pos] = '\0';
                 DrawTextRect(100, y, max_w, 60, line, ALIGN_LEFT);
                 y += 60;
