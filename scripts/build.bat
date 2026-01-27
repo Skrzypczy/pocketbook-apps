@@ -46,10 +46,38 @@ if errorlevel 1 (
     echo   OK
 )
 
+REM Download Bookerly fonts if not already cached
+echo.
+echo Downloading Bookerly fonts...
+if not exist "config\fonts" mkdir "config\fonts"
+
+set FONT_BASE_URL=https://raw.githubusercontent.com/RadicalMilitantLibrary/www/master/fonts
+set NEED_DOWNLOAD=0
+
+if not exist "config\fonts\Bookerly-Regular.ttf" set NEED_DOWNLOAD=1
+if not exist "config\fonts\Bookerly-Bold.ttf" set NEED_DOWNLOAD=1
+if not exist "config\fonts\Bookerly-Italic.ttf" set NEED_DOWNLOAD=1
+
+if %NEED_DOWNLOAD%==1 (
+    curl -sL "%FONT_BASE_URL%/Bookerly-Regular.ttf" -o "config\fonts\Bookerly-Regular.ttf"
+    curl -sL "%FONT_BASE_URL%/Bookerly-Bold.ttf" -o "config\fonts\Bookerly-Bold.ttf"
+    curl -sL "%FONT_BASE_URL%/Bookerly-Italic.ttf" -o "config\fonts\Bookerly-Italic.ttf"
+    if exist "config\fonts\Bookerly-Regular.ttf" (
+        echo   OK
+    ) else (
+        echo   FAILED - check internet connection
+    )
+) else (
+    echo   OK (cached)
+)
+
 echo.
 echo ==========================================
 echo   Build Output: build\
 echo ==========================================
 dir /b build\*.app 2>nul
+echo.
+echo Fonts: config\fonts\
+dir /b config\fonts\*.ttf 2>nul
 
 popd
