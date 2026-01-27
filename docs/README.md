@@ -1,6 +1,94 @@
 # PocketBook Apps
 
-Two custom applications for PocketBook e-readers (tested on PocketBook Era).
+Three custom applications for PocketBook e-readers (tested on PocketBook Era).
+
+---
+
+## Chef
+
+AI-powered recipe generator with dietary restrictions and meal planning.
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| **AI Recipe Generation** | Uses Google Gemini 2.0 Flash for custom recipes |
+| **4-Tab Interface** | Generate, Food, Config, Saved sections |
+| **Dietary Constraints** | Support for Keto, Paleo, Vegan, etc. |
+| **Allergen Exclusion** | Strict filtering for gluten, dairy, nuts, etc. |
+| **Preference Control** | Exclude dislikes (cilantro, spicy, mushrooms, etc.) |
+| **Multi-Language** | Recipe output in English, Polish, or Spanish |
+| **Step-by-Step Mode** | Large text display for cooking |
+| **Recipe Cookbook** | Save and load up to 50 recipes |
+| **Calorie/Time Control** | Set target calories and prep time |
+
+### Setup (Required)
+
+**1. Create API Key File:**
+```
+/mnt/ext1/.chef_api_key
+```
+Paste your Gemini API key into this file (just the key, nothing else).
+
+**2. Get a Gemini API Key:**
+- Go to: https://aistudio.google.com/apikey
+- Create a new API key for Gemini 2.0
+
+### Configuration
+
+The app stores two JSON files on your device:
+```
+/mnt/ext1/.chef_profile.json   # Your dietary preferences
+/mnt/ext1/.chef_cookbook.json  # Saved recipes
+```
+
+### Usage
+
+**Tab 1: GENERATE**
+1. Tap the input field to enter available ingredients
+2. Tap the large **GENERATE** button
+3. AI creates a custom recipe based on your profile
+4. Navigate through steps with PREV/NEXT buttons
+5. Tap **SAVE** to add recipe to cookbook
+6. Tap **DONE** to return to input screen
+
+**Tab 2: FOOD (Profile)**
+- **Lifestyle**: Toggle dietary modes (Keto, Paleo, Vegan, etc.)
+- **Safety**: Mark strict allergen exclusions (Gluten, Dairy, Nuts, etc.)
+- **Taste**: Exclude ingredients you don't like (Cilantro, Spicy, etc.)
+- Changes save automatically
+
+**Tab 3: CONFIG (Settings)**
+- **Calories/Meal**: Adjust target calories (±50 increments)
+- **Max Prep Time**: Set maximum cooking time (±15 minute increments)
+- **Complexity**: Choose Simple, Medium, or Pro/Lab style
+- **Output Language**: English, Polish (Polski), or Spanish (Español)
+- Changes save automatically
+
+**Tab 4: SAVED (Cookbook)**
+- View all saved recipes (up to 50)
+- Tap any recipe to view it in step-by-step mode
+- Tap **CLEAR ALL** to delete all saved recipes
+
+### Example Queries
+
+With ingredients entered:
+- "chicken breast, broccoli, olive oil"
+- "eggs, spinach, feta cheese"
+- "ground beef, tomatoes, onions"
+
+The AI generates recipes matching:
+- Your dietary restrictions (Keto, Vegan, etc.)
+- Allergen exclusions (No Gluten, No Dairy, etc.)
+- Personal dislikes (No Cilantro, Not Spicy, etc.)
+- Target calories and time limits
+- Preferred complexity level
+- Selected output language
+
+### Requirements
+
+- WiFi connection for AI recipe generation
+- Valid Google Gemini API key (in `/mnt/ext1/.chef_api_key`)
 
 ---
 
@@ -189,11 +277,23 @@ Edit these values in `AISearch.c` before building:
    ```
    /mnt/ext1/applications/Vault.app
    /mnt/ext1/applications/AISearch.app
+   /mnt/ext1/applications/Chef.app
    ```
-4. Copy `config\.ai_api_key` to device root as `/.ai_api_key`
+4. Create API key files (for AI apps):
+   ```
+   /mnt/ext1/.ai_api_key      # For AISearch
+   /mnt/ext1/.chef_api_key    # For Chef
+   ```
 5. Disconnect and restart PocketBook
 
 ### Additional Files
+
+For Chef:
+```
+/mnt/ext1/.chef_api_key        # Your Gemini API key
+/mnt/ext1/.chef_profile.json   # Auto-created on first run
+/mnt/ext1/.chef_cookbook.json  # Auto-created on first save
+```
 
 For AI Search:
 ```
@@ -217,10 +317,10 @@ For Vault:
 ### Build Commands
 
 ```bash
-# Build both apps (from repo root)
+# Build all apps (from repo root)
 scripts\build.bat
 
-# Output: build\Vault.app, build\AISearch.app
+# Output: build\Vault.app, build\AISearch.app, build\Chef.app
 ```
 
 Manual build (single app):
@@ -241,7 +341,8 @@ docker run --rm -v "$(pwd):/src" -w /src --entrypoint sh \
 pocketbook-apps/
 ├── apps/                    # Source code
 │   ├── Vault/Vault.c
-│   └── AISearch/AISearch.c
+│   ├── AISearch/AISearch.c
+│   └── Chef/Chef.c
 ├── config/                  # Configuration files
 │   └── .ai_api_key
 ├── docs/                    # Documentation
@@ -264,9 +365,10 @@ pocketbook-apps/
 | App | Libraries |
 |-----|-----------|
 | Vault | inkview.h (native), standard C libs |
-| AISearch | inkview.h (native), standard C libs |
+| AISearch | inkview.h (native), sqlite3 |
+| Chef | inkview.h (native), standard C libs |
 
-No external dependencies - both apps use only PocketBook native APIs.
+No external dependencies - all apps use only PocketBook native APIs.
 
 ### Power Management
 
@@ -275,6 +377,10 @@ No external dependencies - both apps use only PocketBook native APIs.
   - Uses `PostponeTimedPoweroff()` during network requests
   - Network only activated when Search is tapped
   - Proper cleanup on exit
+- **Chef**:
+  - Uses `PostponeTimedPoweroff()` during recipe generation
+  - Network only activated when Generate is tapped
+  - Proper cleanup on exit (API key cleared from memory)
 
 ### Tested On
 
@@ -285,6 +391,18 @@ No external dependencies - both apps use only PocketBook native APIs.
 ---
 
 ## Changelog
+
+### v1.2 (2026-01-27)
+**Chef:**
+- Added: New Chef app for AI-powered recipe generation
+- Added: 4-tab interface (Generate, Food, Config, Saved)
+- Added: Support for 10 dietary modes (Keto, Paleo, Vegan, etc.)
+- Added: Allergen exclusion (12 common allergens)
+- Added: Taste preference filtering (12 common dislikes)
+- Added: Calorie and time constraints
+- Added: Multi-language output (English, Polish, Spanish)
+- Added: Recipe cookbook with persistent storage
+- Added: Step-by-step cooking mode
 
 ### v1.1 (2026-01-26)
 **Vault:**
@@ -318,7 +436,7 @@ No external dependencies - both apps use only PocketBook native APIs.
 
 The PIN hash uses a custom algorithm (not PBKDF2/bcrypt) due to device constraints. For highly sensitive data, use dedicated encryption tools.
 
-**AISearch**: Your API key is stored in a hidden file on the device. Anyone with USB access can read it. Treat it like a password.
+**AISearch & Chef**: Your API keys are stored in hidden files on the device. Anyone with USB access can read them. Treat them like passwords. The apps clear API keys from memory on exit.
 
 ---
 
