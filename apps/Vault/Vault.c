@@ -41,6 +41,10 @@ static ScreenState current_screen = SCREEN_MAIN;
 static int settings_btn_x = 0;
 static int settings_btn_y = 0;
 static int settings_btn_size = 0;
+static int close_btn_x = 0;
+static int close_btn_y = 0;
+static int close_btn_size = 0;
+static int show_reset_confirm = 0;  // Flag for reset confirmation dialog
 
 // Encryption key derived from PIN (expanded to 256 bytes)
 static unsigned char encryption_key[256];
@@ -116,6 +120,10 @@ static void GenerateSalt(char *salt_out, size_t len) {
     salt_out[len - 1] = '\0';
 }
 
+// Stored salt and hash for verification (must be before SavePin)
+static char stored_salt[17] = {0};
+static char stored_hash[33] = {0};
+
 // Save PIN hash to file (PIN is NOT stored, only hash + salt)
 static int SavePin(const char *pin) {
     FILE *fp = fopen(PIN_FILE_PATH, "w");
@@ -131,16 +139,18 @@ static int SavePin(const char *pin) {
     fprintf(fp, "%s\n%s", salt, hash);
     fclose(fp);
     
+    // Copy salt and hash to memory for immediate verification
+    strncpy(stored_salt, salt, sizeof(stored_salt) - 1);
+    stored_salt[sizeof(stored_salt) - 1] = '\0';
+    strncpy(stored_hash, hash, sizeof(stored_hash) - 1);
+    stored_hash[sizeof(stored_hash) - 1] = '\0';
+    
     // Copy PIN to memory for this session (cleared on exit)
     strncpy(stored_pin, pin, MAX_PIN_LENGTH);
     stored_pin[MAX_PIN_LENGTH] = '\0';
     
     return 0;
 }
-
-// Stored salt for verification
-static char stored_salt[17] = {0};
-static char stored_hash[33] = {0};
 
 // Load PIN hash from file (returns 0 if file exists and is valid)
 static int LoadPinHash() {
@@ -394,12 +404,18 @@ void InitLayout() {
     int sh = ScreenHeight();
     
     // PocketBook Era has 1264x1680 resolution - adjust button size accordingly
-    int btnW = sw / 5;
+    // Buttons are 30% smaller than original (sw/5 * 0.7 ≈ sw/7)
+    int btnW = sw / 7;
     int btnH = btnW;  // Square buttons
-    int gap = sw / 40;  // Proportional gap
+    int gap = sw / 50;  // Proportional gap (smaller for smaller buttons)
     int totalW = (btnW * 3) + (gap * 2);
+    int totalH = (btnH * 4) + (gap * 3);  // 4 rows of buttons
     int startX = (sw - totalW) / 2;
-    int startY = (sh / 2) - (btnH / 2);  // Center vertically below status
+    
+    // Reserve space for title (top 1/5) and center buttons in remaining area
+    int topMargin = sh / 5;  // Space for title and status
+    int availableH = sh - topMargin - gap;  // Available height below title
+    int startY = topMargin + (availableH - totalH) / 2;  // Center buttons vertically
 
     for (int i = 0; i < BTN_COUNT; i++) {
         int row = i / 3;
@@ -418,6 +434,11 @@ void InitLayout() {
     settings_btn_size = sw / 15;
     settings_btn_x = sw - settings_btn_size - 20;
     settings_btn_y = 20;
+    
+    // Close button (X in top left)
+    close_btn_size = sw / 15;
+    close_btn_x = 20;
+    close_btn_y = 20;
     
     is_initialized = 1;
 }
@@ -470,6 +491,17 @@ static void ToggleVisibility() {
         }
     } else if (DirExists(TARGET_FOLDER_HIDDEN)) {
         // UNLOCK: Show folder then decrypt files
+        
+        // Check if visible folder already exists (shouldn't happen normally)
+        if (DirExists(TARGET_FOLDER_VISIBLE)) {
+            // Try to remove it (only works if empty)
+            if (rmdir(TARGET_FOLDER_VISIBLE) != 0) {
+                // Folder not empty - user needs to handle this
+                snprintf(status_msg, sizeof(status_msg), "Error: 'Private' folder exists");
+                return;
+            }
+        }
+        
         if (rename(TARGET_FOLDER_HIDDEN, TARGET_FOLDER_VISIBLE) == 0) {
             snprintf(status_msg, sizeof(status_msg), "Decrypting files...");
             Draw();
@@ -529,36 +561,44 @@ static void Draw() {
     }
     DrawTextRect(0, sh / 8, sw, 50, title, ALIGN_CENTER);
 
-    // 3. Draw settings button (gear icon) - only on main screen
+    // 3. Draw close button (X in top left) - always visible
+    FillArea(close_btn_x, close_btn_y, close_btn_size, close_btn_size, LGRAY);
+    DrawRect(close_btn_x, close_btn_y, close_btn_size, close_btn_size, BLACK);
+    SetFont(font_small, BLACK);
+    DrawTextRect(close_btn_x, close_btn_y + (close_btn_size / 4), 
+                 close_btn_size, close_btn_size / 2, "X", ALIGN_CENTER);
+    
+    // 4. Draw settings button (gear icon) - only on main screen when PIN exists
     if (current_screen == SCREEN_MAIN && PinExists()) {
         FillArea(settings_btn_x, settings_btn_y, settings_btn_size, settings_btn_size, LGRAY);
         DrawRect(settings_btn_x, settings_btn_y, settings_btn_size, settings_btn_size, BLACK);
         SetFont(font_small, BLACK);
-        // Draw a simple gear-like symbol
         DrawTextRect(settings_btn_x, settings_btn_y + (settings_btn_size / 4), 
                      settings_btn_size, settings_btn_size / 2, "*", ALIGN_CENTER);
     }
 
-    // 4. Status / Input Area
+    // 5. Status / Input Area - fixed position to prevent layout shift
     int textY = sh / 4;
     
-    // Draw PIN dots (more secure than asterisks, cleaner look)
+    // Always draw PIN area with consistent height using large font
     int pinLen = strlen(input_buffer);
+    char display[32];  // Larger buffer for safety
+    memset(display, 0, sizeof(display));
+    
     if (pinLen > 0) {
-        char mask[MAX_PIN_LENGTH + 1];
-        memset(mask, 0, sizeof(mask));
-        for (int i = 0; i < pinLen && i < MAX_PIN_LENGTH; i++) {
-            mask[i] = '*';
-        }
+        // Show asterisks for entered digits
         SetFont(font_large, BLACK);
-        DrawTextRect(0, textY, sw, 60, mask, ALIGN_CENTER);
+        for (int i = 0; i < pinLen && i < MAX_PIN_LENGTH; i++) {
+            display[i] = '*';
+        }
     } else {
-        // Show placeholder when empty
-        SetFont(font_small, DGRAY);
-        DrawTextRect(0, textY + 10, sw, 40, "_ _ _ _", ALIGN_CENTER);
+        // Show underscores as placeholder (same font size to prevent shift)
+        SetFont(font_large, DGRAY);
+        strcpy(display, "- - - -");
     }
+    DrawTextRect(0, textY, sw, 60, display, ALIGN_CENTER);
 
-    // Draw Status Message
+    // 6. Draw Status Message
     SetFont(font_small, DGRAY);
     DrawTextRect(0, textY + 80, sw, 40, status_msg, ALIGN_CENTER);
     
@@ -567,19 +607,66 @@ static void Draw() {
         const char *state = IsFolderHidden() ? "[LOCKED]" : "[UNLOCKED]";
         DrawTextRect(0, textY + 120, sw, 30, state, ALIGN_CENTER);
     }
-
-    // 5. Draw Keypad with filled buttons for better E-ink visibility
-    SetFont(font_large, BLACK);
-    for (int i = 0; i < BTN_COUNT; i++) {
-        // Draw button background (light gray fill)
-        FillArea(buttons[i].x, buttons[i].y, buttons[i].w, buttons[i].h, LGRAY);
-        // Draw button border
-        DrawRect(buttons[i].x, buttons[i].y, buttons[i].w, buttons[i].h, BLACK);
+    
+    // Show reset confirmation if active
+    if (show_reset_confirm) {
+        // Draw overlay
+        int boxW = sw * 3 / 4;
+        int boxH = sh / 4;
+        int boxX = (sw - boxW) / 2;
+        int boxY = (sh - boxH) / 2;
+        FillArea(boxX, boxY, boxW, boxH, WHITE);
+        DrawRect(boxX, boxY, boxW, boxH, BLACK);
+        DrawRect(boxX + 2, boxY + 2, boxW - 4, boxH - 4, BLACK);
         
-        // Center text vertically and horizontally in button
-        int textOffsetY = (buttons[i].h - 40) / 2;  // Approximate font height
-        DrawTextRect(buttons[i].x, buttons[i].y + textOffsetY, 
-                     buttons[i].w, buttons[i].h, buttons[i].label, ALIGN_CENTER);
+        SetFont(font_large, BLACK);
+        DrawTextRect(boxX, boxY + 20, boxW, 50, "RESET PIN?", ALIGN_CENTER);
+        SetFont(font_small, BLACK);
+        DrawTextRect(boxX + 20, boxY + 80, boxW - 40, 60, "WARNING: All encrypted files will be LOST!", ALIGN_CENTER);
+        
+        // Yes/No buttons
+        int btnW = boxW / 3;
+        int btnH = 60;
+        int btnY = boxY + boxH - btnH - 20;
+        
+        // NO button
+        FillArea(boxX + 30, btnY, btnW, btnH, LGRAY);
+        DrawRect(boxX + 30, btnY, btnW, btnH, BLACK);
+        DrawTextRect(boxX + 30, btnY + 15, btnW, 30, "NO", ALIGN_CENTER);
+        
+        // YES button
+        FillArea(boxX + boxW - btnW - 30, btnY, btnW, btnH, LGRAY);
+        DrawRect(boxX + boxW - btnW - 30, btnY, btnW, btnH, BLACK);
+        DrawTextRect(boxX + boxW - btnW - 30, btnY + 15, btnW, 30, "YES", ALIGN_CENTER);
+    }
+
+    // 7. Draw Keypad with filled buttons for better E-ink visibility (skip if dialog shown)
+    if (!show_reset_confirm) {
+        SetFont(font_large, BLACK);
+        for (int i = 0; i < BTN_COUNT; i++) {
+            // Draw button background (light gray fill)
+            FillArea(buttons[i].x, buttons[i].y, buttons[i].w, buttons[i].h, LGRAY);
+            // Draw button border
+            DrawRect(buttons[i].x, buttons[i].y, buttons[i].w, buttons[i].h, BLACK);
+            
+            // Center text vertically and horizontally in button
+            int textOffsetY = (buttons[i].h - 40) / 2;  // Approximate font height
+            DrawTextRect(buttons[i].x, buttons[i].y + textOffsetY, 
+                         buttons[i].w, buttons[i].h, buttons[i].label, ALIGN_CENTER);
+        }
+        
+        // 8. Draw RESET button on change PIN screen (when entering old PIN)
+        // Position it at top, similar to close and settings buttons
+        if (current_screen == SCREEN_CHANGE_OLD) {
+            int resetW = sw / 4;
+            int resetH = close_btn_size;  // Same height as close/settings buttons
+            int resetX = (sw - resetW) / 2;  // Centered horizontally
+            int resetY = 20;  // Same Y as close/settings buttons
+            FillArea(resetX, resetY, resetW, resetH, LGRAY);
+            DrawRect(resetX, resetY, resetW, resetH, BLACK);
+            SetFont(font_small, BLACK);
+            DrawTextRect(resetX, resetY + (resetH / 4), resetW, resetH / 2, "FORGOT PIN?", ALIGN_CENTER);
+        }
     }
 }
 
@@ -704,25 +791,25 @@ static void ProcessInput(int val) {
 static int Handler(int type, int par1, int par2) {
     switch (type) {
         case EVT_INIT:
-            // Use fonts that work well on E-ink displays
+            // Disable system panel to use full screen
+            SetPanelType(0);
+            
+            // Open fonts
             font_large = OpenFont("LiberationSans-Bold", 48, 1);
             if (!font_large) font_large = OpenFont("LiberationSans", 48, 1);
             font_small = OpenFont("LiberationSans", 28, 0);
             if (!font_small) font_small = OpenFont("LiberationSans", 24, 0);
             
-            // Initialize button layout
+            // Initialize layout
             InitLayout();
             
-            // Check if PIN exists
+            // Check if PIN exists and set initial screen state
             if (!PinExists()) {
-                // First time setup
                 current_screen = SCREEN_SETUP_NEW;
                 snprintf(status_msg, sizeof(status_msg), "Create PIN (%d-%d digits)", MIN_PIN_LENGTH, MAX_PIN_LENGTH);
             } else {
-                // Load existing PIN hash for verification
                 if (LoadPinHash() == 0) {
                     current_screen = SCREEN_MAIN;
-                    // Set initial status based on folder state
                     if (IsFolderHidden()) {
                         snprintf(status_msg, sizeof(status_msg), "Folder is locked");
                     } else if (DirExists(TARGET_FOLDER_VISIBLE)) {
@@ -731,7 +818,6 @@ static int Handler(int type, int par1, int par2) {
                         snprintf(status_msg, sizeof(status_msg), "Enter PIN to create vault");
                     }
                 } else {
-                    // PIN file corrupted - reset
                     current_screen = SCREEN_SETUP_NEW;
                     snprintf(status_msg, sizeof(status_msg), "Create new PIN");
                 }
@@ -740,20 +826,87 @@ static int Handler(int type, int par1, int par2) {
             
         case EVT_SHOW:
             Draw();
-            FullUpdate();  // Full refresh on show for clean display
+            PartialUpdate(0, 0, ScreenWidth(), ScreenHeight());
             break;
             
         case EVT_POINTERUP: {
+            int sw = ScreenWidth();
+            int sh = ScreenHeight();
+            
+            // Handle reset confirmation dialog first
+            if (show_reset_confirm) {
+                int boxW = sw * 3 / 4;
+                int boxH = sh / 4;
+                int boxX = (sw - boxW) / 2;
+                int boxY = (sh - boxH) / 2;
+                int btnW = boxW / 3;
+                int btnH = 60;
+                int btnY = boxY + boxH - btnH - 20;
+                
+                // Check NO button
+                if (par1 >= boxX + 30 && par1 < boxX + 30 + btnW &&
+                    par2 >= btnY && par2 < btnY + btnH) {
+                    show_reset_confirm = 0;
+                    Draw();
+                    FullUpdate();  // Full refresh to clear dialog
+                    break;
+                }
+                // Check YES button - perform reset
+                if (par1 >= boxX + boxW - btnW - 30 && par1 < boxX + boxW - 30 &&
+                    par2 >= btnY && par2 < btnY + btnH) {
+                    show_reset_confirm = 0;
+                    // Delete PIN file
+                    remove(PIN_FILE_PATH);
+                    // Clear memory
+                    memset(stored_pin, 0, sizeof(stored_pin));
+                    memset(stored_salt, 0, sizeof(stored_salt));
+                    memset(stored_hash, 0, sizeof(stored_hash));
+                    memset(input_buffer, 0, sizeof(input_buffer));
+                    // Go to setup screen
+                    current_screen = SCREEN_SETUP_NEW;
+                    snprintf(status_msg, sizeof(status_msg), "Create new PIN (%d-%d digits)", MIN_PIN_LENGTH, MAX_PIN_LENGTH);
+                    Draw();
+                    FullUpdate();
+                    break;
+                }
+                // Ignore other touches when dialog is shown
+                break;
+            }
+            
+            // Check close button (always visible)
+            if (par1 >= close_btn_x && par1 < close_btn_x + close_btn_size &&
+                par2 >= close_btn_y && par2 < close_btn_y + close_btn_size) {
+                CloseApp();
+                break;
+            }
+            
             // Check settings button (only on main screen)
             if (current_screen == SCREEN_MAIN && PinExists()) {
                 if (par1 >= settings_btn_x && par1 < settings_btn_x + settings_btn_size &&
                     par2 >= settings_btn_y && par2 < settings_btn_y + settings_btn_size) {
-                    // Settings tapped - go to change PIN
+                    // Settings tapped - go to change PIN screen
                     current_screen = SCREEN_CHANGE_OLD;
                     memset(input_buffer, 0, sizeof(input_buffer));
                     snprintf(status_msg, sizeof(status_msg), "Enter current PIN");
                     Draw();
-                    PartialUpdate(0, 0, ScreenWidth(), ScreenHeight());
+                    PartialUpdate(0, 0, sw, sh);
+                    break;
+                }
+            }
+            
+            // Check FORGOT PIN button (only on change PIN screen)
+            // Position matches drawing: top area, centered
+            if (current_screen == SCREEN_CHANGE_OLD) {
+                int resetW = sw / 4;
+                int resetH = close_btn_size;
+                int resetX = (sw - resetW) / 2;
+                int resetY = 20;
+                if (par1 >= resetX && par1 < resetX + resetW &&
+                    par2 >= resetY && par2 < resetY + resetH) {
+                    // Show reset confirmation dialog
+                    show_reset_confirm = 1;
+                    Draw();
+                    PartialUpdate(0, 0, sw, sh);
                     break;
                 }
             }

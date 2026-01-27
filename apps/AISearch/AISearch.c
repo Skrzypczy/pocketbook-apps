@@ -417,6 +417,9 @@ static void OpenSearchKeyboard() {
 static int Handler(int type, int par1, int par2) {
     switch (type) {
         case EVT_INIT:
+            // Disable system panel to use full screen
+            SetPanelType(0);
+            
             // Open fonts
             font_large = OpenFont("LiberationSans-Bold", 42, 1);
             if (!font_large) font_large = OpenFont("LiberationSans", 42, 1);

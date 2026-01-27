@@ -54,7 +54,7 @@ set SKIPPED=0
 
 REM Create directories if needed
 if not exist "%POCKETBOOK_DRIVE%\applications" mkdir "%POCKETBOOK_DRIVE%\applications"
-if not exist "%POCKETBOOK_DRIVE%\Private" mkdir "%POCKETBOOK_DRIVE%\Private"
+REM Note: Don't create Private folder - Vault app manages it
 
 REM Copy apps from build folder
 echo Installing Vault.app...
@@ -89,53 +89,56 @@ if errorlevel 1 (
 
 REM Copy API key for AI apps from config folder
 echo Installing API key...
-if exist "config\.ai_api_key" (
-    copy /Y "config\.ai_api_key" "%POCKETBOOK_DRIVE%\" >nul 2>&1
-    if errorlevel 1 (
-        echo   FAILED - Could not copy API key
-        set /a FAILED+=1
-    ) else (
-        echo   OK (used by AISearch and Chef)
-        set /a SUCCESS+=1
-    )
-) else (
+if not exist "config\.ai_api_key" (
     echo   SKIP - config\.ai_api_key not found
     set /a SKIPPED+=1
+    goto :after_apikey
 )
+copy /Y "config\.ai_api_key" "%POCKETBOOK_DRIVE%\" >nul 2>&1
+if errorlevel 1 (
+    echo   FAILED - Could not copy API key
+    set /a FAILED+=1
+) else (
+    echo   OK (used by AISearch and Chef)
+    set /a SUCCESS+=1
+)
+:after_apikey
 
 REM Install Amazon Kindle font (Bookerly)
 echo Installing Bookerly font...
 if not exist "%POCKETBOOK_DRIVE%\fonts" mkdir "%POCKETBOOK_DRIVE%\fonts"
-if exist "config\fonts\Bookerly-Regular.ttf" (
-    copy /Y "config\fonts\Bookerly*.ttf" "%POCKETBOOK_DRIVE%\fonts\" >nul 2>&1
-    if errorlevel 1 (
-        echo   FAILED - Could not copy font files
-        set /a FAILED+=1
-    ) else (
-        echo   OK
-        set /a SUCCESS+=1
-    )
-) else (
+if not exist "config\fonts\Bookerly-Regular.ttf" (
     echo   SKIP - Run scripts\build.bat first to download fonts
     set /a SKIPPED+=1
+    goto :after_fonts
 )
+copy /Y "config\fonts\Bookerly*.ttf" "%POCKETBOOK_DRIVE%\fonts\" >nul 2>&1
+if errorlevel 1 (
+    echo   FAILED - Could not copy font files
+    set /a FAILED+=1
+) else (
+    echo   OK
+    set /a SUCCESS+=1
+)
+:after_fonts
 
 REM Install screensaver images
 echo Installing screensaver...
-if not exist "%POCKETBOOK_DRIVE%\system\logo" mkdir "%POCKETBOOK_DRIVE%\system\logo"
-if exist "config\ScreenSaver\Nature.png" (
-    copy /Y "config\ScreenSaver\Nature.png" "%POCKETBOOK_DRIVE%\system\logo\poweroff.png" >nul 2>&1
-    if errorlevel 1 (
-        echo   FAILED - Could not copy screensaver
-        set /a FAILED+=1
-    ) else (
-        echo   OK (Nature screensaver)
-        set /a SUCCESS+=1
-    )
-) else (
+if not exist "%POCKETBOOK_DRIVE%\system\logo\offlogo" mkdir "%POCKETBOOK_DRIVE%\system\logo\offlogo"
+if not exist "config\ScreenSaver\Nature.png" (
     echo   SKIP - config\ScreenSaver\Nature.png not found
     set /a SKIPPED+=1
+    goto :after_screensaver
 )
+copy /Y "config\ScreenSaver\Nature.png" "%POCKETBOOK_DRIVE%\system\logo\offlogo\Nature.png" >nul 2>&1
+if errorlevel 1 (
+    echo   FAILED - Could not copy screensaver
+    set /a FAILED+=1
+) else (
+    echo   OK (select in Settings ^> Personalize ^> Logo)
+    set /a SUCCESS+=1
+)
+:after_screensaver
 
 echo.
 echo ==========================================
@@ -148,16 +151,15 @@ echo   - applications\Vault.app
 echo   - applications\AISearch.app
 echo   - applications\Chef.app
 echo   - .ai_api_key (for AISearch)
-echo   - Private\ (folder for Vault)
 echo   - fonts\Bookerly*.ttf (Amazon Kindle font)
-echo   - system\logo\poweroff.png (screensaver)
+echo   - system\logo\offlogo\Nature.png (power-off logo)
 echo.
 echo Next steps:
 echo   1. Create .chef_api_key file on device for Chef app
 echo   2. Safely eject PocketBook
 echo   3. Apps will appear in Applications menu
 echo   4. Select Bookerly font in reader settings
-echo   5. Screensaver shows on power off
+echo   5. SET LOGO: Settings ^> Personalize ^> Power-off logo ^> Nature.png
 echo.
 popd
 pause

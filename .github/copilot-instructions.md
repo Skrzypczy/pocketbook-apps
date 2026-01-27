@@ -40,6 +40,10 @@ PocketBook e-reader applications written in C using the native inkview SDK. Targ
 ### PocketBook-Specific Patterns
 
 ```c
+// CRITICAL: Disable system panel for full-screen apps
+// Must be called FIRST in EVT_INIT to prevent layout shift issues
+SetPanelType(0);  // 0 = disabled, gives full screen access
+
 // Font handling
 ifont *font = OpenFont("LiberationSans", 32, 0);
 if (!font) font = OpenFont("LiberationSans", 28, 0);  // Fallback
@@ -52,11 +56,19 @@ PartialUpdate(0, 0, ScreenWidth(), ScreenHeight());  // Fast, some ghosting
 // OR
 FullUpdate();  // Slow, clean refresh
 
-// Event handler pattern
+// Event handler pattern - CORRECT ORDER IS CRITICAL
 static int Handler(int type, int par1, int par2) {
     switch (type) {
-        case EVT_INIT:    // App starting
-        case EVT_SHOW:    // Screen visible
+        case EVT_INIT:
+            SetPanelType(0);  // FIRST! Disable system panel
+            // Open fonts...
+            // InitLayout()...
+            // Set initial state...
+            break;
+        case EVT_SHOW:
+            Draw();
+            PartialUpdate(0, 0, ScreenWidth(), ScreenHeight());
+            break;
         case EVT_HIDE:    // Screen hidden
         case EVT_POINTERUP: // Touch released (par1=x, par2=y)
         case EVT_KEYPRESS:  // Hardware button (par1=key code)
@@ -118,3 +130,4 @@ char *response = QuickDownloadExt3(url, &size, timeout_ms, NULL, post_data, &err
 3. Not checking file operations → silent failures
 4. Hardcoding screen dimensions → breaks on other devices
 5. Missing `PostponeTimedPoweroff()` → device sleeps during network
+6. **Missing `SetPanelType(0)` in EVT_INIT** → UI draws at wrong position, shifts when touched (system panel steals screen space)

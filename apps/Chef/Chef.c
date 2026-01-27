@@ -476,7 +476,16 @@ static void GenerateRecipe() {
     PostponeTimedPoweroff();
     iv_netinfo *net = NetInfo();
     if (!net || net->connected == 0) {
-        NetConnect2("Chef", 1);
+        strncpy(status_msg, "Connecting to WiFi...", sizeof(status_msg) - 1);
+        DrawUI();
+        int conn_result = NetConnect2("Chef", 1);
+        if (conn_result != 0) {
+            is_loading = 0;
+            strncpy(status_msg, "WiFi not available. Connect and try again.", sizeof(status_msg) - 1);
+            status_msg[sizeof(status_msg) - 1] = '\0';
+            DrawUI();
+            return;
+        }
     }
     
     // Build prompt based on profile
@@ -1001,6 +1010,9 @@ static int Handler(int type, int par1, int par2) {
     
     switch (type) {
         case EVT_INIT:
+            // Disable system panel to use full screen
+            SetPanelType(0);
+            
             font_title = OpenFont("LiberationSans-Bold", 40, 1);
             font_large = OpenFont("LiberationSans-Bold", 36, 1);
             font_medium = OpenFont("LiberationSans", 28, 0);
