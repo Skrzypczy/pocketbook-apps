@@ -77,13 +77,18 @@ static int Handler(int type, int par1, int par2) {
     return 0;
 }
 
-// Network requests
+// Network requests - IMPORTANT: QuickDownloadExt auto-shows WiFi dialog!
 PostponeTimedPoweroff();  // Prevent sleep during network
+// No manual NetConnect2 needed - QuickDownloadExt handles it automatically
+char *response = QuickDownloadExt3(url, &size, timeout_ms, NULL, post_data, &error);
+
+// HOWEVER: If using libcurl (for Content-Type headers), you MUST connect WiFi manually:
+// PocketBook disconnects WiFi to save power - curl won't auto-reconnect!
 iv_netinfo *net = NetInfo();
 if (!net || net->connected == 0) {
-    NetConnect2("App Name", 1);  // Connect with hourglass
+    NetConnect2(NULL, 1);  // NULL = last network, 1 = show hourglass
 }
-char *response = QuickDownloadExt3(url, &size, timeout_ms, NULL, post_data, &error);
+// Then use curl...
 ```
 
 ## Security Requirements
@@ -131,3 +136,87 @@ char *response = QuickDownloadExt3(url, &size, timeout_ms, NULL, post_data, &err
 4. Hardcoding screen dimensions → breaks on other devices
 5. Missing `PostponeTimedPoweroff()` → device sleeps during network
 6. **Missing `SetPanelType(0)` in EVT_INIT** → UI draws at wrong position, shifts when touched (system panel steals screen space)
+
+## Advanced SDK Patterns
+
+### HTTP Requests - Three Methods
+
+```c
+// Method 1: QuickDownloadExt (simple, auto-shows WiFi dialog)
+void *result = QuickDownloadExt(url, &retsize, timeout_sec, cookie, post);
+// IMPORTANT: result must be free()'d
+
+// Method 2: Session-based (async, download to file)
+int session = NewSession();
+iv_sessioninfo *sinf = GetSessionInfo(session);
+SetUserAgent(session, "MyApp/1.0");
+DownloadTo(session, url, postdata, filename, timeout_sec);
+// Poll GetSessionStatus() and sinf->response
+CloseSession(session);
+
+// Method 3: libcurl (full control, requires -lcurl)
+CURL *curl = curl_easy_init();
+curl_easy_setopt(curl, CURLOPT_URL, url);
+curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+curl_easy_perform(curl);
+curl_easy_cleanup(curl);
+```
+
+### WiFi Control Pattern
+```c
+int wifi_activate() {
+    iv_netinfo *netinfo = NetInfo();
+    if (netinfo->connected) return 0;  // Already connected
+    
+    int result = NetConnect2(NULL, 1);  // NULL = last network, 1 = show hourglass
+    if (result != 0) return 1;  // Failed
+    
+    netinfo = NetInfo();
+    return netinfo->connected ? 0 : 2;  // Verify connection
+}
+```
+
+### Handler Return Values
+```c
+// 0 = Event not handled - system will process it
+// 1 = Event handled - system won't process it further
+// ALWAYS return 1 after CloseApp() to prevent system handling
+```
+
+### UI Dialogs
+```c
+// Blocking dialog (waits for response)
+int result = DialogSynchro(ICON_QUESTION, "Title", "Message", "Yes", "No", NULL);
+
+// Non-blocking dialog (callback-based)
+Dialog(ICON_INFO, "Title", "Message", "OK", NULL, callback_handler);
+
+// Auto-dismiss message
+Message(ICON_INFORMATION, "Title", "Message", 3000);  // 3 seconds
+```
+
+### Touch Event Handling
+```c
+case EVT_POINTERDOWN:
+case EVT_POINTERMOVE:
+case EVT_POINTERUP:
+    iv_mtinfo *touch = GetTouchInfo();
+    int x = touch->x;
+    int y = touch->y;
+    // EVT_POINTERUP = touch released (best for button clicks)
+    break;
+```
+
+### Book Information APIs
+```c
+bookinfo *info = GetBookInfo("/path/to/book.epub");
+// info->title, info->author, info->size, info->lang
+
+ibitmap *cover = GetBookCover("/path/to/book.epub", 120, 120);
+DrawBitmap(x, y, cover);
+
+const char *handler = GetFileHandler("/path/to/file");
+```
+
+## SDK Reference
+See [docs/POCKETBOOK_SDK_REFERENCE.md](../docs/POCKETBOOK_SDK_REFERENCE.md) for complete API documentation.

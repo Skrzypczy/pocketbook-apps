@@ -4,6 +4,7 @@
 #include <string.h>
 #include <time.h>
 #include <sqlite3.h>
+#include <curl/curl.h>
 
 // --- CONFIGURATION ---
 #define GEMINI_API_KEY_FILE "/mnt/ext1/.ai_api_key"  // Store API key in separate file
@@ -69,6 +70,27 @@ static int LoadApiKey() {
     }
     
     return 0;
+}
+
+// --- CURL RESPONSE BUFFER ---
+typedef struct {
+    char *data;
+    size_t size;
+} CurlResponse;
+
+static size_t CurlWriteCallback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t total_size = size * nmemb;
+    CurlResponse *resp = (CurlResponse *)userp;
+    
+    char *ptr = realloc(resp->data, resp->size + total_size + 1);
+    if (!ptr) return 0;  // Out of memory
+    
+    resp->data = ptr;
+    memcpy(&(resp->data[resp->size]), contents, total_size);
+    resp->size += total_size;
+    resp->data[resp->size] = '\0';
+    
+    return total_size;
 }
 
 // Load books from PocketBook's SQLite database
@@ -261,38 +283,55 @@ static void CallGeminiAPI(const char *user_query) {
     char url[256];
     snprintf(url, sizeof(url), "%s%s", GEMINI_URL_BASE, api_key);
     
-    // Use PocketBook's native QuickDownloadExt3 for POST request
-    // This integrates with power management and WiFi properly
-    int response_size = 0;
-    int error_code = 0;
-    
     // Postpone auto-poweroff during network operation
     PostponeTimedPoweroff();
     
-    // Make POST request using PocketBook API
-    // QuickDownloadExt3(url, retsize, timeout, cookie, post_data, error_code)
-    char *response = (char *)QuickDownloadExt3(
-        url,                  // URL with API key
-        &response_size,       // Response size output
-        REQUEST_TIMEOUT,      // Timeout in ms
-        NULL,                 // No cookies
-        payload,              // POST data
-        &error_code           // Error code output
-    );
-    
-    if (response && response_size > 0) {
-        ParseGeminiResponse(response);
-        free(response);
-    } else {
-        if (error_code != 0) {
-            snprintf(response_buffer, sizeof(response_buffer), 
-                "Network error (code: %d). Check WiFi.", error_code);
-        } else {
-            snprintf(response_buffer, sizeof(response_buffer), 
-                "No response from server.");
-        }
+    // Make request using curl (needed for Content-Type: application/json header)
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        snprintf(response_buffer, sizeof(response_buffer), "Failed to init network");
+        free(payload);
+        return;
     }
     
+    CurlResponse resp = {0};
+    resp.data = malloc(1);
+    resp.data[0] = '\0';
+    resp.size = 0;
+    
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, REQUEST_TIMEOUT / 1000);  // Convert ms to seconds
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);  // Skip SSL verification on embedded device
+    
+    CURLcode res = curl_easy_perform(curl);
+    
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    
+    if (res != CURLE_OK) {
+        snprintf(response_buffer, sizeof(response_buffer), 
+            "Network error: %s", curl_easy_strerror(res));
+        free(resp.data);
+        free(payload);
+        return;
+    }
+    
+    if (resp.size > 0) {
+        ParseGeminiResponse(resp.data);
+    } else {
+        snprintf(response_buffer, sizeof(response_buffer), 
+            "Empty response from server.");
+    }
+    
+    free(resp.data);
     free(payload);
 }
 
@@ -475,19 +514,30 @@ static int Handler(int type, int par1, int par2) {
                     break;
                 }
                 
-                // Check network connectivity first
+                // Check network connectivity - curl doesn't auto-connect like inkview functions
                 iv_netinfo *net = NetInfo();
                 if (!net || net->connected == 0) {
-                    // Try to connect
                     snprintf(status_msg, sizeof(status_msg), "Connecting to WiFi...");
                     Draw();
                     PartialUpdate(0, 0, ScreenWidth(), ScreenHeight());
                     
-                    int conn_result = NetConnect2("AI Search", 1);  // Show hourglass
+                    // NetConnect2 shows system WiFi dialog if needed
+                    int conn_result = NetConnect2(NULL, 1);  // NULL = use last network, 1 = show hourglass
                     if (conn_result != 0) {
+                        snprintf(status_msg, sizeof(status_msg), "WiFi connection failed");
+                        snprintf(response_buffer, sizeof(response_buffer), 
+                            "Could not connect to WiFi. Please connect manually and try again.");
+                        Draw();
+                        PartialUpdate(0, 0, ScreenWidth(), ScreenHeight());
+                        break;
+                    }
+                    
+                    // Verify connection
+                    net = NetInfo();
+                    if (!net || net->connected == 0) {
                         snprintf(status_msg, sizeof(status_msg), "WiFi not available");
                         snprintf(response_buffer, sizeof(response_buffer), 
-                            "Please connect to WiFi first.");
+                            "WiFi connection not established. Try again.");
                         Draw();
                         PartialUpdate(0, 0, ScreenWidth(), ScreenHeight());
                         break;

@@ -45,6 +45,10 @@ exit /b 1
 
 :found
 echo Found PocketBook at %POCKETBOOK_DRIVE%
+
+REM Get volume name for later ejection
+for /f "tokens=*" %%v in ('wmic logicaldisk where "DeviceID='%POCKETBOOK_DRIVE%'" get VolumeName /value 2^>nul ^| find "="') do set %%v
+echo Volume: %VolumeName%
 echo.
 
 REM Initialize counters
@@ -106,13 +110,13 @@ if errorlevel 1 (
 
 REM Install Amazon Kindle font (Bookerly)
 echo Installing Bookerly font...
-if not exist "%POCKETBOOK_DRIVE%\fonts" mkdir "%POCKETBOOK_DRIVE%\fonts"
+if not exist "%POCKETBOOK_DRIVE%\system\fonts" mkdir "%POCKETBOOK_DRIVE%\system\fonts"
 if not exist "config\fonts\Bookerly-Regular.ttf" (
     echo   SKIP - Run scripts\build.bat first to download fonts
     set /a SKIPPED+=1
     goto :after_fonts
 )
-copy /Y "config\fonts\Bookerly*.ttf" "%POCKETBOOK_DRIVE%\fonts\" >nul 2>&1
+copy /Y "config\fonts\Bookerly*.ttf" "%POCKETBOOK_DRIVE%\system\fonts\" >nul 2>&1
 if errorlevel 1 (
     echo   FAILED - Could not copy font files
     set /a FAILED+=1
@@ -146,20 +150,46 @@ echo   Installation Summary
 echo ==========================================
 echo   Success: %SUCCESS%  Failed: %FAILED%  Skipped: %SKIPPED%
 echo.
-echo Installed to %POCKETBOOK_DRIVE%:
+echo Installed to %POCKETBOOK_DRIVE%
 echo   - applications\Vault.app
 echo   - applications\AISearch.app
 echo   - applications\Chef.app
-echo   - .ai_api_key (for AISearch)
-echo   - fonts\Bookerly*.ttf (Amazon Kindle font)
+echo   - .ai_api_key (for AISearch and Chef)
+echo   - system\fonts\Bookerly*.ttf (Amazon Kindle font)
 echo   - system\logo\offlogo\Nature.png (power-off logo)
 echo.
+
+REM Safely eject PocketBook
+echo Ejecting PocketBook...
+
+REM Flush file buffers
+powershell -Command "[System.IO.DriveInfo]::GetDrives() | Out-Null" 2>nul
+
+REM Try Shell COM eject (most compatible)
+powershell -Command "(New-Object -ComObject Shell.Application).Namespace(17).ParseName('%POCKETBOOK_DRIVE%').InvokeVerb('Eject')" 2>nul
+
+timeout /t 3 /nobreak >nul
+if not exist "%POCKETBOOK_DRIVE%\system\config" goto :ejected
+
+REM Fallback: Shell COM object
+powershell -Command "(New-Object -ComObject Shell.Application).Namespace(17).ParseName('%POCKETBOOK_DRIVE%').InvokeVerb('Eject')" 2>nul
+timeout /t 2 /nobreak >nul
+if not exist "%POCKETBOOK_DRIVE%\system\config" goto :ejected
+
+echo   WARNING: Auto-eject failed. Please use "Safely Remove Hardware" icon in taskbar.
+goto :after_eject
+
+:ejected
+echo   OK - PocketBook safely ejected!
+
+:after_eject
+
+echo.
 echo Next steps:
-echo   1. Create .chef_api_key file on device for Chef app
-echo   2. Safely eject PocketBook
-echo   3. Apps will appear in Applications menu
-echo   4. Select Bookerly font in reader settings
-echo   5. SET LOGO: Settings ^> Personalize ^> Power-off logo ^> Nature.png
+echo   1. Apps will appear in Applications menu
+echo   2. Restart device to detect new fonts
+echo   3. Select Bookerly font in: Settings ^> Fonts and Rendering
+echo   4. SET LOGO: Settings ^> Personalize ^> Power-off logo ^> Nature.png
 echo.
 popd
 pause

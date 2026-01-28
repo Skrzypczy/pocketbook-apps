@@ -26,9 +26,11 @@ AI-powered recipe generator with dietary restrictions and meal planning.
 
 **1. Create API Key File:**
 ```
-/mnt/ext1/.chef_api_key
+/mnt/ext1/.ai_api_key
 ```
 Paste your Gemini API key into this file (just the key, nothing else).
+
+**Note:** This is the same API key file used by AISearch. You only need one key for both apps.
 
 **2. Get a Gemini API Key:**
 - Go to: https://aistudio.google.com/apikey
@@ -88,7 +90,7 @@ The AI generates recipes matching:
 ### Requirements
 
 - WiFi connection for AI recipe generation
-- Valid Google Gemini API key (in `/mnt/ext1/.chef_api_key`)
+- Valid Google Gemini API key (in `/mnt/ext1/.ai_api_key`)
 
 ---
 
@@ -279,10 +281,9 @@ Edit these values in `AISearch.c` before building:
    /mnt/ext1/applications/AISearch.app
    /mnt/ext1/applications/Chef.app
    ```
-4. Create API key files (for AI apps):
+4. Create API key file (for AI apps):
    ```
-   /mnt/ext1/.ai_api_key      # For AISearch
-   /mnt/ext1/.chef_api_key    # For Chef
+   /mnt/ext1/.ai_api_key      # For both AISearch and Chef
    ```
 5. Disconnect and restart PocketBook
 
@@ -290,14 +291,14 @@ Edit these values in `AISearch.c` before building:
 
 For Chef:
 ```
-/mnt/ext1/.chef_api_key        # Your Gemini API key
+/mnt/ext1/.ai_api_key          # Your Gemini API key (shared with AISearch)
 /mnt/ext1/.chef_profile.json   # Auto-created on first run
 /mnt/ext1/.chef_cookbook.json  # Auto-created on first save
 ```
 
 For AI Search:
 ```
-/mnt/ext1/.ai_api_key      # Your Gemini API key
+/mnt/ext1/.ai_api_key      # Your Gemini API key (shared with Chef)
 ```
 
 For Vault:
@@ -347,7 +348,10 @@ pocketbook-apps/
 │   └── .ai_api_key
 ├── docs/                    # Documentation
 │   ├── README.md
-│   └── CONTRIBUTING.md
+│   ├── CONTRIBUTING.md
+│   ├── POCKETBOOK_SDK_REFERENCE.md  # SDK API reference
+│   └── sdk/
+│       └── inkview.h       # PocketBook SDK header
 ├── scripts/                 # Build & install scripts
 │   ├── build.bat
 │   └── install.bat
@@ -355,6 +359,26 @@ pocketbook-apps/
 └── .github/                 # AI assistant config
     └── copilot-instructions.md
 ```
+
+---
+
+## SDK Documentation
+
+For developers looking to understand or modify these apps:
+
+- **[POCKETBOOK_SDK_REFERENCE.md](POCKETBOOK_SDK_REFERENCE.md)** - Comprehensive API guide with examples
+  - Event handling patterns
+  - Screen drawing & updates
+  - HTTP requests (3 methods)
+  - WiFi control
+  - Touch input
+  - UI dialogs & widgets
+  - SQLite database
+  - JSON parsing
+  - Threading
+  - Remote debugging with gdb
+  
+- **[sdk/inkview.h](sdk/inkview.h)** - Full SDK header file with all function signatures
 
 ---
 
