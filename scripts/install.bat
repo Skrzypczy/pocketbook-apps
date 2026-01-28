@@ -58,6 +58,8 @@ set SKIPPED=0
 
 REM Create directories if needed
 if not exist "%POCKETBOOK_DRIVE%\applications" mkdir "%POCKETBOOK_DRIVE%\applications"
+
+
 REM Note: Don't create Private folder - Vault app manages it
 
 REM Copy apps from build folder
@@ -145,6 +147,8 @@ if errorlevel 1 (
 :after_screensaver
 
 echo.
+
+echo Next steps:
 echo ==========================================
 echo   Installation Summary
 echo ==========================================
@@ -159,33 +163,21 @@ echo   - system\fonts\Bookerly*.ttf (Amazon Kindle font)
 echo   - system\logo\offlogo\Nature.png (power-off logo)
 echo.
 
-REM Safely eject PocketBook
-echo Ejecting PocketBook...
+REM === Eject PocketBook device after install ===
+echo Attempting to safely eject PocketBook device...
 
-REM Flush file buffers
-powershell -Command "[System.IO.DriveInfo]::GetDrives() | Out-Null" 2>nul
+REM Flush file buffers and give OS a moment to release handles
+powershell -Command "[System.IO.DriveInfo]::GetDrives() | Out-Null; Start-Sleep -Milliseconds 500" 2>nul
 
-REM Try Shell COM eject (most compatible)
-powershell -Command "(New-Object -ComObject Shell.Application).Namespace(17).ParseName('%POCKETBOOK_DRIVE%').InvokeVerb('Eject')" 2>nul
-
-timeout /t 3 /nobreak >nul
-if not exist "%POCKETBOOK_DRIVE%\system\config" goto :ejected
-
-REM Fallback: Shell COM object
-powershell -Command "(New-Object -ComObject Shell.Application).Namespace(17).ParseName('%POCKETBOOK_DRIVE%').InvokeVerb('Eject')" 2>nul
-timeout /t 2 /nobreak >nul
-if not exist "%POCKETBOOK_DRIVE%\system\config" goto :ejected
-
-echo   WARNING: Auto-eject failed. Please use "Safely Remove Hardware" icon in taskbar.
-goto :after_eject
-
-:ejected
-echo   OK - PocketBook safely ejected!
-
-:after_eject
-
+REM Call eject script for the specific drive (pass 'D:' format)
+PowerShell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%eject_usb.ps1" -DriveLetter "%POCKETBOOK_DRIVE%" 
+set "EJECT_EXIT=%ERRORLEVEL%"
+if "%EJECT_EXIT%"=="0" (
+    echo   OK - PocketBook safely ejected!
+) else (
+    echo   WARNING: Auto-eject failed (exit code %EJECT_EXIT%). Please use "Safely Remove Hardware" icon in taskbar.
+)
 echo.
-echo Next steps:
 echo   1. Apps will appear in Applications menu
 echo   2. Restart device to detect new fonts
 echo   3. Select Bookerly font in: Settings ^> Fonts and Rendering
