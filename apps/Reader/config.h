@@ -3,12 +3,14 @@
 
 #include "engine.h"
 
-#define CFG_PATH            "/mnt/ext1/.simple_reader.cfg"
-#define CFG_CACHE_DIR       "/mnt/ext1/system/state/simple_reader/cr3cache"
-#define CFG_STATE_DIR       "/mnt/ext1/system/state/simple_reader"
-#define CFG_LOG_PATH        "/mnt/ext1/system/state/simple_reader.log"
+#define CFG_PATH            "/mnt/ext1/.naskilla.cfg"
+#define CFG_CACHE_DIR       "/mnt/ext1/system/state/naskilla/cr3cache"
+#define CFG_STATE_DIR       "/mnt/ext1/system/state/naskilla"
+#define CFG_LOG_PATH        "/mnt/ext1/system/state/naskilla.log"
+#define CFG_BOOT_LOG        "/mnt/ext1/naskilla_boot.log"
 #define CFG_FONTS_DIR       "/mnt/ext1/system/fonts"
 #define CFG_BOOKS_DIR       "/mnt/ext1/Books"
+#define CFG_LIBRARY_DIR     "/mnt/ext1/Library"
 #define CFG_SENDTO_DIR1     "/mnt/ext1/SendToPocketBook"
 #define CFG_SENDTO_DIR2     "/mnt/ext1/SendToPb"
 #define CFG_SENDTO_DIR3     "/mnt/ext1/Send to PocketBook"
@@ -36,7 +38,8 @@
 #define CFG_WARMTH_MIN      0
 #define CFG_WARMTH_MAX      100
 
-#define CFG_BOOKS_MAX       2000
+#define CFG_BOOKS_MAX       8000
+/* Prefer ui_bar_h() from layout.h at runtime; keep a fallback constant. */
 #define CFG_BAR_HEIGHT      64
 
 typedef struct reader_config {

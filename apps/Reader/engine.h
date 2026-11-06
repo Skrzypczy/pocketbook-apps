@@ -39,6 +39,8 @@ typedef struct reader_engine {
     int (*next)(void);
     int (*prev)(void);
     int (*draw)(unsigned char *gray, int width, int height, int stride);
+    /* Plain text of the current page. 0 = buf filled. May be NULL. */
+    int (*page_text)(char *buf, size_t buflen);
     int (*get_position)(char *buf, size_t buflen);
     int (*set_position)(const char *text);
     int (*contents)(engine_toc_item *items, int max_items);

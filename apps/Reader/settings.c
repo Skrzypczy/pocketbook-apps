@@ -1,5 +1,6 @@
 #include "ui.h"
 #include "frontlight.h"
+#include "layout.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -92,10 +93,11 @@ static void row_label(settings_row r, char *buf, size_t n)
 
 void settings_draw(void)
 {
-    int sw = ScreenWidth();
-    int sh = ScreenHeight();
-    int row_h = 64;
-    int top = 40;
+    int sw = ui_sw();
+    int sh = ui_sh();
+    int row_h = ui_row_h();
+    int m = ui_margin();
+    int top = ui_title_h();
     int y = top;
     int fg = g_app.cfg.night ? WHITE : BLACK;
     int bg = g_app.cfg.night ? BLACK : WHITE;
@@ -103,8 +105,9 @@ void settings_draw(void)
 
     ClearScreen();
     FillArea(0, 0, sw, sh, bg);
-    SetFont(g_app.font_ui, fg);
-    DrawTextRect(0, 4, sw, 32, "Settings", ALIGN_CENTER | VALIGN_MIDDLE);
+    if (g_app.font_ui)
+        SetFont(g_app.font_ui, fg);
+    DrawTextRect(0, 0, sw, ui_title_h(), "Settings", ALIGN_CENTER | VALIGN_MIDDLE);
 
     for (r = 0; r < ROW_COUNT; r++) {
         char label[128];
@@ -113,18 +116,18 @@ void settings_draw(void)
         if (y + row_h > sh)
             break;
         row_label((settings_row)r, label, sizeof(label));
-        DrawTextRect(24, y, sw - 48, row_h - 4, label,
+        DrawTextRect(m, y, sw - 2 * m - 200, row_h - 4, label,
                      ALIGN_LEFT | VALIGN_MIDDLE);
         /* +/- zones for adjustable rows */
         if (r == ROW_FONT_SIZE || r == ROW_MARGINS || r == ROW_SPACING ||
             r == ROW_GOTO || r == ROW_BRIGHTNESS || r == ROW_WARMTH ||
             r == ROW_FULL_REFRESH) {
-            DrawTextRect(sw - 200, y, 80, row_h - 4, "−",
+            DrawTextRect(sw - 200, y, 80, row_h - 4, "-",
                          ALIGN_CENTER | VALIGN_MIDDLE);
             DrawTextRect(sw - 100, y, 80, row_h - 4, "+",
                          ALIGN_CENTER | VALIGN_MIDDLE);
         }
-        DrawLine(24, y + row_h - 1, sw - 24, y + row_h - 1, fg);
+        DrawLine(m, y + row_h - 1, sw - m, y + row_h - 1, fg);
         y += row_h;
     }
 }
@@ -195,10 +198,10 @@ static int adjust_row(settings_row r, int dir)
 
 int settings_hit(int x, int y)
 {
-    int sw = ScreenWidth();
-    int sh = ScreenHeight();
-    int row_h = 64;
-    int top = 40;
+    int sw = ui_sw();
+    int sh = ui_sh();
+    int row_h = ui_row_h();
+    int top = ui_title_h();
     int yy = top;
     int r;
 

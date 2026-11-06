@@ -86,6 +86,7 @@ void ui_on_orientation(void);
 void ui_tick_clock(void);
 void ui_save_position(void);
 void ui_apply_layout(void);
+void ui_apply_fonts(void);
 
 int library_scan(browse_root root);
 void library_draw(void);

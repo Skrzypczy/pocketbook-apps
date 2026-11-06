@@ -14,14 +14,16 @@ void bar_compute(bar_layout *b, int screen_w, int screen_h, int height)
     b->height = height;
     if (screen_w <= 0 || height <= 0)
         return;
-    slot = screen_w / 4;
+    slot = screen_w / 5;
     b->clock_x = 0;
     b->clock_w = slot;
     b->day_x = slot;
     b->day_w = slot;
     b->light_x = slot * 2;
     b->light_w = slot;
-    b->pages_x = slot * 3;
+    b->books_x = slot * 3;
+    b->books_w = slot;
+    b->pages_x = slot * 4;
     b->pages_w = screen_w - b->pages_x;
 }
 
@@ -33,6 +35,8 @@ bar_hit bar_hit_test(const bar_layout *b, int x, int y)
         return BAR_HIT_DAYNIGHT;
     if (x >= b->light_x && x < b->light_x + b->light_w)
         return BAR_HIT_LIGHT;
+    if (x >= b->books_x && x < b->books_x + b->books_w)
+        return BAR_HIT_BOOKS;
     if (x >= b->pages_x && x < b->pages_x + b->pages_w)
         return BAR_HIT_PAGES;
     return BAR_HIT_NONE;
@@ -69,6 +73,8 @@ int bar_draw(const bar_layout *b,
         light_lbl = "";
     DrawTextRect(b->light_x, 0, b->light_w, b->height,
                  light_lbl, ALIGN_CENTER | VALIGN_MIDDLE);
+    DrawTextRect(b->books_x, 0, b->books_w, b->height,
+                 "Books", ALIGN_CENTER | VALIGN_MIDDLE);
 
     snprintf(pages_buf, sizeof(pages_buf), "%d / %d", page, pages);
     DrawTextRect(b->pages_x, 0, b->pages_w, b->height,

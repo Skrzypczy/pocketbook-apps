@@ -285,5 +285,7 @@ void reader_log(const char *fmt, ...)
     vfprintf(fp, fmt, ap);
     va_end(ap);
     fputc('\n', fp);
+    fflush(fp);
+    fsync(fileno(fp));
     fclose(fp);
 }

@@ -9,7 +9,7 @@ def clamp_int(v, lo, hi):
 
 
 def bar_compute(w, h, height=64):
-    slot = w // 4
+    slot = w // 5
     return {
         "w": w,
         "h": h,
@@ -18,8 +18,10 @@ def bar_compute(w, h, height=64):
         "day_w": slot,
         "light_x": slot * 2,
         "light_w": slot,
-        "pages_x": slot * 3,
-        "pages_w": w - slot * 3,
+        "books_x": slot * 3,
+        "books_w": slot,
+        "pages_x": slot * 4,
+        "pages_w": w - slot * 4,
     }
 
 
@@ -30,6 +32,8 @@ def bar_hit(b, x, y):
         return "DAYNIGHT"
     if b["light_x"] <= x < b["light_x"] + b["light_w"]:
         return "LIGHT"
+    if b["books_x"] <= x < b["books_x"] + b["books_w"]:
+        return "BOOKS"
     if b["pages_x"] <= x < b["pages_x"] + b["pages_w"]:
         return "PAGES"
     return "NONE"
@@ -47,6 +51,7 @@ def test_bar():
     assert bar_hit(b, 10, 10) == "NONE"
     assert bar_hit(b, 400, 10) == "DAYNIGHT"
     assert bar_hit(b, 700, 10) == "LIGHT"
+    assert bar_hit(b, 800, 10) == "BOOKS"
     assert bar_hit(b, 1100, 10) == "PAGES"
     assert bar_hit(b, -1, 10) == "NONE"
     b2 = bar_compute(1680, 1264)

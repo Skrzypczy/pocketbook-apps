@@ -204,6 +204,13 @@ static int pdf_contents(engine_toc_item *items, int max_items)
     return count;
 }
 
+static int pdf_page_text(char *buf, size_t buflen)
+{
+    (void)buf;
+    (void)buflen;
+    return -1;
+}
+
 static int pdf_is_reflowable(void) { return 0; }
 static const char *pdf_name(void) { return "mupdf"; }
 
@@ -217,6 +224,7 @@ extern const reader_engine engine_mupdf = {
     pdf_next,
     pdf_prev,
     pdf_draw,
+    pdf_page_text,
     pdf_get_position,
     pdf_set_position,
     pdf_contents,

@@ -5,6 +5,7 @@ typedef enum {
     BAR_HIT_NONE = 0,
     BAR_HIT_DAYNIGHT,
     BAR_HIT_LIGHT,
+    BAR_HIT_BOOKS,
     BAR_HIT_PAGES
 } bar_hit;
 
@@ -15,6 +16,7 @@ typedef struct bar_layout {
     int clock_x, clock_w;
     int day_x, day_w;
     int light_x, light_w;
+    int books_x, books_w;
     int pages_x, pages_w;
 } bar_layout;
 

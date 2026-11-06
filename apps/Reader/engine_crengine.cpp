@@ -6,8 +6,10 @@
 
 #include <cstdio>
 #include <cstring>
+#include <strings.h>
 #include <string>
 #include <vector>
+#include <dirent.h>
 
 #include "crengine.h"
 #include "lvdocview.h"
@@ -30,37 +32,67 @@ static lString32 u32(const char *s)
     return Utf8ToUnicode(u8(s));
 }
 
+static void register_fonts_in_dir(const char *dir)
+{
+    DIR *d;
+    struct dirent *ent;
+    if (!dir || !fontMan)
+        return;
+    d = opendir(dir);
+    if (!d) {
+        reader_log("crengine: cannot opendir %s", dir);
+        return;
+    }
+    while ((ent = readdir(d)) != NULL) {
+        size_t n;
+        char path[768];
+        if (!ent->d_name || ent->d_name[0] == '.')
+            continue;
+        n = strlen(ent->d_name);
+        if (n < 5)
+            continue;
+        if (!(strcasecmp(ent->d_name + n - 4, ".ttf") == 0 ||
+              strcasecmp(ent->d_name + n - 4, ".otf") == 0 ||
+              strcasecmp(ent->d_name + n - 4, ".ttc") == 0))
+            continue;
+        snprintf(path, sizeof(path), "%s/%s", dir, ent->d_name);
+        if (fontMan->RegisterFont(u8(path)))
+            reader_log("crengine: registered %s", ent->d_name);
+    }
+    closedir(d);
+}
+
 extern "C" int engine_global_init(const char *cache_dir, const char *fonts_dir)
 {
     if (g_inited)
         return 0;
-    if (!InitFontManager(lString8())) {
+
+    reader_log("crengine: InitFontManager...");
+    if (!InitFontManager(fonts_dir && fonts_dir[0] ? u8(fonts_dir) : lString8())) {
         reader_log("crengine: InitFontManager failed");
         return -1;
     }
+    if (!fontMan) {
+        reader_log("crengine: fontMan is NULL after init");
+        return -1;
+    }
+
     g_fonts_dir = fonts_dir ? fonts_dir : "";
-    if (fonts_dir && fonts_dir[0]) {
-        char path[512];
-        const char *faces[] = {
-            "Bookerly-Regular.ttf", "Bookerly-Bold.ttf", "Bookerly-Italic.ttf",
-            "LiberationSans-Regular.ttf", "LiberationSans-Bold.ttf", NULL
-        };
-        for (int i = 0; faces[i]; i++) {
-            snprintf(path, sizeof(path), "%s/%s", fonts_dir, faces[i]);
-            fontMan->RegisterFont(u8(path));
-        }
-    }
-    /* Also register common system fonts. */
-    fontMan->RegisterFont(u8("/usr/share/fonts/ttf/liberation/LiberationSans-Regular.ttf"));
-    fontMan->RegisterFont(u8("/usr/share/fonts/ttf/liberation/LiberationSans-Bold.ttf"));
+    /* Register every TTF we can find — Draw() segfaults with zero usable fonts. */
+    register_fonts_in_dir(fonts_dir);
+    register_fonts_in_dir("/mnt/ext1/system/fonts");
+    register_fonts_in_dir("/mnt/ext1/fonts");
+    register_fonts_in_dir("/ebrmain/fonts");
+    register_fonts_in_dir("/usr/share/fonts/ttf/liberation");
+    register_fonts_in_dir("/usr/share/fonts/truetype/liberation");
+    reader_log("crengine: font count after register = %d", fontMan->GetFontCount());
 
-    if (cache_dir && cache_dir[0]) {
-        /* 64 MB disk cache; storage factor applied via CRE defaults. */
-        ldomDocCache::init(u32(cache_dir), 64 * 1024 * 1024);
-    }
+    (void)cache_dir;
+    reader_log("crengine: doc cache disabled");
+    reader_log("crengine: HyphMan skipped");
 
-    HyphMan::initDictionaries(u32("/mnt/ext1/system/share/crengine/hyph"), true);
     g_inited = 1;
+    reader_log("crengine: global init ok");
     return 0;
 }
 
@@ -71,8 +103,7 @@ extern "C" void engine_global_shutdown(void)
         g_view = NULL;
     }
     if (g_inited) {
-        ldomDocCache::close();
-        HyphMan::uninit();
+        /* Cache/HyphMan were not started in the minimal init path. */
         ShutdownFontManager();
         g_inited = 0;
     }
@@ -80,46 +111,56 @@ extern "C" void engine_global_shutdown(void)
 
 static int cre_open(const char *path, int width, int height)
 {
+    reader_log("cre_open: start %s %dx%d", path ? path : "(null)", width, height);
     if (!g_inited)
         return -1;
     if (g_view) {
         delete g_view;
         g_view = NULL;
     }
-    g_view = new LVDocView(8, false); /* 8 bpp gray */
-    g_view->setViewMode(DVM_PAGES, 1);
-    g_width = width;
-    g_height = height;
-    g_view->Resize(width, height);
 
-    CRPropRef props = g_view->propsGetCurrent();
-    props->setInt(PROP_STATUS_LINE, 0);
-    props->setInt(PROP_SHOW_TIME, 0);
-    props->setInt(PROP_SHOW_BATTERY, 0);
-    props->setInt(PROP_SHOW_TITLE, 0);
-    props->setInt(PROP_SHOW_PAGE_NUMBER, 0);
-    props->setInt(PROP_SHOW_PAGE_COUNT, 0);
-    g_view->propsApply(props);
+    try {
+        reader_log("cre_open: new LVDocView");
+        g_view = new LVDocView(4, false); /* 4 bpp gray — lighter, PB-friendly */
+        g_view->setViewMode(DVM_PAGES, 1);
+        g_width = width;
+        g_height = height;
+        reader_log("cre_open: Resize");
+        g_view->Resize(width, height);
 
-    if (!g_view->LoadDocument(path)) {
-        reader_log("crengine: LoadDocument failed for %s", path);
-        delete g_view;
-        g_view = NULL;
-        return -2;
+        CRPropRef props = g_view->propsGetCurrent();
+        props->setInt(PROP_STATUS_LINE, 0);
+        props->setInt(PROP_SHOW_TIME, 0);
+        props->setInt(PROP_SHOW_BATTERY, 0);
+        props->setInt(PROP_SHOW_TITLE, 0);
+        props->setInt(PROP_SHOW_PAGE_NUMBER, 0);
+        props->setInt(PROP_SHOW_PAGE_COUNT, 0);
+        g_view->propsApply(props);
+
+        reader_log("cre_open: LoadDocument...");
+        if (!g_view->LoadDocument(path)) {
+            reader_log("crengine: LoadDocument failed for %s", path);
+            delete g_view;
+            g_view = NULL;
+            return -2;
+        }
+        reader_log("cre_open: LoadDocument ok, fonts=%d",
+                   fontMan ? fontMan->GetFontCount() : -1);
+        /* Prefer a face we know we registered. */
+        g_view->setDefaultFontFace(u8("Bookerly"));
+        g_view->setDefaultFontFace(u8("Liberation Sans"));
+        g_view->setDefaultFontFace(u8("LiberationSans"));
+        reader_log("cre_open: Render...");
+        g_view->Render();
+        reader_log("cre_open: Render ok pages=%d", g_view->getPageCount());
+    } catch (...) {
+        reader_log("cre_open: exception");
+        if (g_view) {
+            delete g_view;
+            g_view = NULL;
+        }
+        return -3;
     }
-
-    /* Hyphenation from book language. */
-    lString32 lang = g_view->getLanguage();
-    if (lang.empty())
-        lang = lString32("en");
-    {
-        lString32 id = lString32("English_US.pattern");
-        if (lang == lString32("pl") || lang.startsWith(lString32("pl-")))
-            id = lString32("Polish.pattern");
-        HyphMan::activateDictionary(id);
-    }
-
-    g_view->Render();
     return 0;
 }
 
@@ -216,24 +257,17 @@ static int cre_prev(void)
 
 static int cre_draw(unsigned char *gray, int width, int height, int stride)
 {
+    /* TEMP: full-page LVDocView::Draw hard-kills the process on Era
+     * (log stops at "calling Draw"; SIGSEGV handler never runs → likely
+     * SIGKILL/OOM). Until a safe blit path exists, skip bitmap Draw and
+     * let the UI show page number via inkview text. Pagination still works. */
     if (!g_view || !gray)
         return -1;
-    if (width != g_width || height != g_height) {
-        g_width = width;
-        g_height = height;
-        g_view->Resize(width, height);
-        g_view->Render();
-    }
-    LVGrayDrawBuf buf(width, height, 8);
-    g_view->Draw(buf, false);
-    for (int y = 0; y < height; y++) {
-        lUInt8 *src = buf.GetScanLine(y);
-        unsigned char *dst = gray + y * stride;
-        if (src)
-            memcpy(dst, src, (size_t)width);
-        else
-            memset(dst, 0xFF, (size_t)width);
-    }
+    reader_log("cre_draw: SKIP bitmap Draw %dx%d fonts=%d pages=%d cur=%d",
+               width, height,
+               fontMan ? fontMan->GetFontCount() : -1,
+               g_view->getPageCount(), g_view->getCurPage() + 1);
+    memset(gray, 0xFF, (size_t)stride * (size_t)height);
     return 0;
 }
 
@@ -292,6 +326,27 @@ static int cre_contents(engine_toc_item *items, int max_items)
     return count;
 }
 
+static int cre_page_text(char *buf, size_t buflen)
+{
+    if (!g_view || !buf || buflen < 2)
+        return -1;
+    buf[0] = '\0';
+    try {
+        lString32 text = g_view->getPageText(true, -1);
+        if (text.empty()) {
+            reader_log("cre_page_text: empty");
+            return -1;
+        }
+        lString8 utf = UnicodeToUtf8(text);
+        snprintf(buf, buflen, "%s", utf.c_str());
+        reader_log("cre_page_text: %d bytes", (int)strlen(buf));
+        return 0;
+    } catch (...) {
+        reader_log("cre_page_text: exception");
+        return -1;
+    }
+}
+
 static int cre_is_reflowable(void) { return 1; }
 static const char *cre_name(void) { return "crengine"; }
 
@@ -305,6 +360,7 @@ extern const reader_engine engine_crengine = {
     cre_next,
     cre_prev,
     cre_draw,
+    cre_page_text,
     cre_get_position,
     cre_set_position,
     cre_contents,

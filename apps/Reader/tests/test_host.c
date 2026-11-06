@@ -38,6 +38,7 @@ static void test_bar_hits(void)
     assert(bar_hit_test(&b, 10, 10) == BAR_HIT_NONE);
     assert(bar_hit_test(&b, 400, 10) == BAR_HIT_DAYNIGHT);
     assert(bar_hit_test(&b, 700, 10) == BAR_HIT_LIGHT);
+    assert(bar_hit_test(&b, 800, 10) == BAR_HIT_BOOKS);
     assert(bar_hit_test(&b, 1100, 10) == BAR_HIT_PAGES);
     assert(bar_hit_test(&b, 100, 100) == BAR_HIT_NONE);
     assert(bar_hit_test(&b, -1, 10) == BAR_HIT_NONE);

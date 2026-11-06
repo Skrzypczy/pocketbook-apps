@@ -1,16 +1,42 @@
 #include "ui.h"
 #include "frontlight.h"
 #include "refresh.h"
+#include "layout.h"
 
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 
 #include "inkview.h"
 
 app_state g_app;
+
+static void boot_marker(const char *msg)
+{
+    const char *paths[] = {
+        CFG_BOOT_LOG,
+        CFG_LOG_PATH,
+        "/mnt/ext1/system/state/naskilla_boot.log",
+        "/tmp/naskilla_boot.log",
+        NULL
+    };
+    int i;
+    mkdir("/mnt/ext1/system", 0755);
+    mkdir("/mnt/ext1/system/state", 0755);
+    mkdir(CFG_STATE_DIR, 0755);
+    for (i = 0; paths[i]; i++) {
+        FILE *fp = fopen(paths[i], "a");
+        if (fp) {
+            fputs(msg, fp);
+            fputc('\n', fp);
+            fflush(fp);
+            fclose(fp);
+        }
+    }
+}
 
 static void update_clock_string(void)
 {
@@ -44,32 +70,29 @@ static int ensure_page_buffer(int w, int h)
 
 static void blit_gray_to_screen(int dst_y)
 {
-    int y, x;
-    int w = g_app.buf_w;
-    int h = g_app.buf_h;
-    int fg_is_night = g_app.cfg.night;
-    /* Stretch gray page into inkview framebuffer via FillArea of 1px is too slow;
-     * use DrawBitmap-like path: DrawPixel loop is slow too. Use Stretch for rows
-     * by packing into temporary and Draw. PocketBook: invert via color mapping. */
-    for (y = 0; y < h; y++) {
-        const unsigned char *row = g_app.page_buf + y * g_app.buf_stride;
-        for (x = 0; x < w; ) {
-            unsigned char v = row[x];
-            int run = 1;
-            int color;
-            while (x + run < w && row[x + run] == v)
-                run++;
-            if (fg_is_night)
-                color = (v < 128) ? WHITE : BLACK; /* already inverted by engine often */
-            else
-                color = (v < 128) ? BLACK : WHITE;
-            /* Fine gray: map midtones */
-            if (v > 64 && v < 192)
-                color = (v < 128) ? DGRAY : LGRAY;
-            FillArea(x, dst_y + y, run, 1, color);
-            x += run;
+    icanvas *c;
+    int y;
+
+    if (!g_app.page_buf || g_app.buf_w <= 0 || g_app.buf_h <= 0)
+        return;
+
+    /* Prefer direct canvas copy when depths match — Stretch(IMAGE_GRAY8)
+     * has crashed on some firmware after a successful cre_draw. */
+    c = GetCanvas();
+    if (c && c->addr && c->depth == 8 && c->width >= g_app.buf_w) {
+        for (y = 0; y < g_app.buf_h; y++) {
+            int dy = dst_y + y;
+            if (dy < 0 || dy >= c->height)
+                continue;
+            memcpy(c->addr + dy * c->scanline,
+                   g_app.page_buf + y * g_app.buf_stride,
+                   (size_t)g_app.buf_w);
         }
+        return;
     }
+
+    Stretch(g_app.page_buf, IMAGE_GRAY8, g_app.buf_w, g_app.buf_h,
+            g_app.buf_stride, 0, dst_y, g_app.buf_w, g_app.buf_h, 0);
 }
 
 void ui_apply_layout(void)
@@ -116,8 +139,87 @@ static void draw_message(void)
     DrawTextRect(40, sh / 2 - 40, sw - 80, 80, g_app.message,
                  ALIGN_CENTER | VALIGN_MIDDLE);
     SetFont(g_app.font_ui, fg);
-    DrawTextRect(40, sh - 100, sw - 80, 48, "Back",
+    DrawTextRect(40, sh - ui_action_h(), sw - 80, ui_action_h(), "Back",
                  ALIGN_CENTER | VALIGN_MIDDLE);
+}
+
+static ifont *g_body_font;
+static int g_body_size;
+static int g_font_ui_px;
+static int g_font_bar_px;
+static int g_font_msg_px;
+
+static int clamp_px(int sz, int lo, int hi)
+{
+    if (sz < lo) return lo;
+    if (sz > hi) return hi;
+    return sz;
+}
+
+static void reopen_font(ifont **slot, int *cached, int px, int aa)
+{
+    if (*slot && *cached == px)
+        return;
+    if (*slot) {
+        CloseFont(*slot);
+        *slot = NULL;
+    }
+    *slot = OpenFont("LiberationSans", px, aa);
+    if (!*slot)
+        *slot = OpenFont("LiberationSans", px > 20 ? 20 : px, aa);
+    *cached = px;
+}
+
+void ui_apply_fonts(void)
+{
+    int body = g_app.cfg.font_size;
+    int row = ui_row_h();
+    int menu;
+    int title;
+    int bar;
+
+    if (body < CFG_FONT_MIN)
+        body = CFG_FONT_MIN;
+    if (body > CFG_FONT_MAX)
+        body = CFG_FONT_MAX;
+    /* Same setting as the book, capped so one line still fits the menu row. */
+    menu = body;
+    if (menu > row - 20)
+        menu = row - 20;
+    menu = clamp_px(menu, 20, 64);
+    title = menu + 4;
+    if (title > row - 12)
+        title = row - 12;
+    title = clamp_px(title, 22, 72);
+    /* Five labels share the bar, so this stays smaller than the menus. */
+    bar = body * 2 / 3;
+    if (bar > ui_bar_h() - 16)
+        bar = ui_bar_h() - 16;
+    bar = clamp_px(bar, 16, 26);
+    reopen_font(&g_app.font_ui, &g_font_ui_px, menu, 0);
+    reopen_font(&g_app.font_msg, &g_font_msg_px, title, 1);
+    reopen_font(&g_app.font_bar, &g_font_bar_px, bar, 0);
+}
+
+static ifont *body_font(void)
+{
+    int sz = g_app.cfg.font_size;
+    if (sz < CFG_FONT_MIN)
+        sz = CFG_FONT_MIN;
+    if (sz > CFG_FONT_MAX)
+        sz = CFG_FONT_MAX;
+    if (g_body_font && g_body_size == sz)
+        return g_body_font;
+    if (g_body_font) {
+        CloseFont(g_body_font);
+        g_body_font = NULL;
+    }
+    g_body_font = OpenFont("LiberationSans", sz, 0);
+    if (!g_body_font)
+        g_body_font = OpenFont("LiberationSans", sz > 24 ? 24 : sz, 0);
+    g_body_size = sz;
+    reader_log("body font size=%d handle=%p", sz, (void *)g_body_font);
+    return g_body_font ? g_body_font : g_app.font_ui;
 }
 
 static void draw_reading(int full)
@@ -129,9 +231,12 @@ static void draw_reading(int full)
     int fg = g_app.cfg.night ? WHITE : BLACK;
     int bg = g_app.cfg.night ? BLACK : WHITE;
     int page = 0, pages = 0;
+    int draw_rc;
+    icanvas *c;
 
-    bar_compute(&g_app.bar, sw, sh, CFG_BAR_HEIGHT);
-    page_h = sh - CFG_BAR_HEIGHT;
+    ui_apply_fonts();
+    bar_compute(&g_app.bar, sw, sh, ui_bar_h());
+    page_h = sh - ui_bar_h();
     if (!eng) {
         ui_set_message("No book open");
         draw_message();
@@ -143,35 +248,69 @@ static void draw_reading(int full)
         refresh_full();
         return;
     }
-    eng->draw(g_app.page_buf, sw, page_h, g_app.buf_stride);
+
+    c = GetCanvas();
+    reader_log("draw_reading: canvas depth=%d scan=%d %dx%d",
+               c ? c->depth : -1, c ? c->scanline : -1,
+               c ? c->width : -1, c ? c->height : -1);
+    boot_marker("naskilla: eng->draw");
+    draw_rc = eng->draw(g_app.page_buf, sw, page_h, g_app.buf_stride);
+    reader_log("draw_reading: eng->draw rc=%d", draw_rc);
+    boot_marker("naskilla: eng->draw done");
     page = eng->current_page();
     pages = eng->page_count();
 
-    ClearScreen();
-    FillArea(0, 0, sw, sh, bg);
-    blit_gray_to_screen(CFG_BAR_HEIGHT);
-    SetFont(g_app.font_bar, fg);
-    update_clock_string();
-    bar_draw(&g_app.bar, g_app.clock, g_app.cfg.night, g_app.light_on,
-             g_app.light_available, page, pages, fg, bg);
+    boot_marker("naskilla: clear+blit");
+    {
+        static char page_text[12000];
+        int use_text = 0;
+        int m = ui_margin();
+        page_text[0] = '\0';
+        if (eng->page_text &&
+            eng->page_text(page_text, sizeof(page_text)) == 0 && page_text[0])
+            use_text = 1;
+
+        ClearScreen();
+        FillArea(0, 0, sw, sh, bg);
+        /* Blank page buffer is solid white. Blitting it covers the night background
+         * and then white text disappears. Skip it while we paint page text. */
+        if (!use_text && draw_rc == 0)
+            blit_gray_to_screen(ui_bar_h());
+        boot_marker("naskilla: blit done");
+        if (g_app.font_bar)
+            SetFont(g_app.font_bar, fg);
+        update_clock_string();
+        bar_draw(&g_app.bar, g_app.clock, g_app.cfg.night, g_app.light_on,
+                 g_app.light_available, page, pages, fg, bg);
+        if (use_text) {
+            ifont *body = body_font();
+            FillArea(0, ui_bar_h(), sw, page_h, bg);
+            if (body)
+                SetFont(body, fg);
+            DrawTextRect(m, ui_bar_h() + m / 2, sw - 2 * m, page_h - m,
+                         page_text, ALIGN_LEFT | VALIGN_TOP);
+        }
+    }
+    boot_marker("naskilla: bar done");
 
     if (full) {
         refresh_full();
         g_app.pages_since_full = 0;
     } else {
-        refresh_partial(0, CFG_BAR_HEIGHT, sw, page_h);
-        /* also refresh bar when page number changes */
-        refresh_partial(0, 0, sw, CFG_BAR_HEIGHT);
+        refresh_partial(0, ui_bar_h(), sw, page_h);
+        refresh_partial(0, 0, sw, ui_bar_h());
         g_app.pages_since_full++;
         if (g_app.pages_since_full >= g_app.cfg.full_refresh) {
             refresh_full();
             g_app.pages_since_full = 0;
         }
     }
+    boot_marker("naskilla: refresh done");
 }
 
 void ui_draw(void)
 {
+    ui_apply_fonts();
     switch (g_app.screen) {
     case SCREEN_HOME:
         home_draw();
@@ -215,22 +354,109 @@ void ui_show_home(void)
 
 void ui_show_browse(browse_root root)
 {
+    if (root == BROWSE_LIBRARY) {
+        int sw = ScreenWidth();
+        int sh = ScreenHeight();
+        int fg = g_app.cfg.night ? WHITE : BLACK;
+        int bg = g_app.cfg.night ? BLACK : WHITE;
+        ui_apply_fonts();
+        ClearScreen();
+        FillArea(0, 0, sw, sh, bg);
+        if (g_app.font_msg)
+            SetFont(g_app.font_msg, fg);
+        DrawTextRect(0, sh / 2 - 20, sw, 40, "Scanning library",
+                     ALIGN_CENTER | VALIGN_MIDDLE);
+        refresh_full();
+    }
     library_scan(root);
     g_app.screen = SCREEN_BROWSE;
     ui_draw();
+}
+
+static void write_exact(const char *path, const char *text)
+{
+    FILE *fp;
+    if (!path || !text)
+        return;
+    fp = fopen(path, "wb");
+    if (!fp)
+        return;
+    fwrite(text, 1, strlen(text), fp);
+    fclose(fp);
+}
+
+/* The desktop cover is the book recorded on this task, not the book
+ * NaSkilla happens to have open. Same pair KOReader uses: /tmp/.current
+ * plus SetSubtaskInfo. lastopen.txt is the recent-books list. */
+static void notify_system_book(const char *path)
+{
+    bookinfo *info;
+    ibitmap *cover;
+    char label[192];
+    if (!path || !path[0])
+        return;
+    info = GetBookInfo(path);
+    if (info && info->title && info->title[0])
+        snprintf(label, sizeof(label), "%s", info->title);
+    else
+        snprintf(label, sizeof(label), "NaSkilla");
+
+    write_exact(CURRENTBOOK, path);
+    write_exact(CURRENTBOOK_SAVE, path);
+    SetSubtaskInfo(GetCurrentTask(), 0, label, path);
+    SetFileHandler(path, "/mnt/ext1/applications/NaSkilla.app");
+
+    cover = GetBookCover(path, 600, 860);
+    if (cover)
+        free(cover);
+    BookPreparing(path);
+    AddLastOpen(path);
+    FlushLastOpen();
+    BookReady(path);
+    reader_log("notify home cover %s", path);
 }
 
 void ui_open_book(const char *path)
 {
     bookinfo *info;
     char pos[ENGINE_POS_MAX];
+    char stored[512];
+    size_t n;
     int sw, sh, page_h;
     int rc;
 
+    /* Continue passes cfg.last_book. Copy first: snprintf into that same
+     * buffer is undefined and was wiping the path before the engine opened. */
+    while (path && (*path == ' ' || *path == '\t'))
+        path++;
     if (!path || !path[0]) {
-        ui_set_message("Missing file");
+        reader_log("ui_open_book: empty path rejected");
+        ui_set_message("No book selected");
         ui_draw();
         return;
+    }
+    snprintf(stored, sizeof(stored), "%s", path);
+    n = strlen(stored);
+    while (n > 0 && (stored[n - 1] == ' ' || stored[n - 1] == '\t' ||
+                     stored[n - 1] == '\r' || stored[n - 1] == '\n')) {
+        stored[--n] = '\0';
+    }
+    path = stored;
+    if (!path[0]) {
+        reader_log("ui_open_book: empty path rejected");
+        ui_set_message("No book selected");
+        ui_draw();
+        return;
+    }
+    {
+        FILE *probe = fopen(path, "rb");
+        if (!probe) {
+            reader_log("ui_open_book: cannot read [%s]", path);
+            ui_set_message("File not found");
+            ui_draw();
+            return;
+        }
+        fclose(probe);
     }
     info = GetBookInfo(path);
     if (info && info->drm) {
@@ -245,8 +471,10 @@ void ui_open_book(const char *path)
     snprintf(g_app.cfg.last_book, sizeof(g_app.cfg.last_book), "%s", path);
     config_save(&g_app.cfg);
 
+    ui_apply_fonts();
     ClearScreen();
-    SetFont(g_app.font_msg, g_app.cfg.night ? WHITE : BLACK);
+    if (g_app.font_msg)
+        SetFont(g_app.font_msg, g_app.cfg.night ? WHITE : BLACK);
     DrawTextRect(0, ScreenHeight() / 2 - 20, ScreenWidth(), 40, "Opening",
                  ALIGN_CENTER | VALIGN_MIDDLE);
     refresh_partial(0, ScreenHeight() / 2 - 20, ScreenWidth(), 40);
@@ -254,20 +482,37 @@ void ui_open_book(const char *path)
     PostponeTimedPoweroff();
     sw = ScreenWidth();
     sh = ScreenHeight();
-    page_h = sh - CFG_BAR_HEIGHT;
+    page_h = sh - ui_bar_h();
     if (ensure_page_buffer(sw, page_h) != 0) {
         ui_draw();
         return;
     }
+
+    boot_marker("naskilla: before engine_global_init");
+    /* Engines stay unloaded until a book is opened (home screen must not depend on them). */
+    if (engine_global_init(CFG_CACHE_DIR, CFG_FONTS_DIR) != 0) {
+        reader_log("engine_global_init failed");
+        ui_set_message("Reader engine failed to start");
+        ui_draw();
+        return;
+    }
+    boot_marker("naskilla: after engine_global_init");
+
+    reader_log("ui_open_book: opening %s %dx%d", path, sw, page_h);
+    boot_marker("naskilla: before engine_open_path");
     rc = engine_open_path(path, sw, page_h);
+    reader_log("ui_open_book: engine_open_path rc=%d", rc);
+    boot_marker(rc == 0 ? "naskilla: engine_open_path ok" : "naskilla: engine_open_path FAIL");
     if (rc != 0) {
         reader_log("open failed %d for %s", rc, path);
         ui_set_message("Cannot open");
         ui_draw();
         return;
     }
+    /* Bitmap Draw is skipped (OOM). Layout + position only call Render, which is safe. */
+    boot_marker("naskilla: apply_layout");
     ui_apply_layout();
-    if (config_get_position(path, pos, sizeof(pos)) == 0)
+    if (config_get_position(path, pos, sizeof(pos)) == 0 && engine_active())
         engine_active()->set_position(pos);
     {
         const reader_engine *eng = engine_active();
@@ -276,7 +521,10 @@ void ui_open_book(const char *path)
     }
     g_app.screen = SCREEN_READING;
     g_app.pages_since_full = 0;
+    notify_system_book(path);
+    boot_marker("naskilla: before first draw");
     ui_draw();
+    boot_marker("naskilla: first draw done");
 }
 
 static void turn_page(int next)
@@ -339,7 +587,7 @@ void ui_handle_pointer(int x, int y)
         library_hit(x, y);
         break;
     case SCREEN_MESSAGE:
-        if (y > sh - 100)
+        if (y > sh - ui_action_h())
             ui_show_home();
         break;
     case SCREEN_SETTINGS:
@@ -356,11 +604,16 @@ void ui_handle_pointer(int x, int y)
         break;
     case SCREEN_READING: {
         bar_hit hit = bar_hit_test(&g_app.bar, x, y);
-        if (y < CFG_BAR_HEIGHT) {
+        if (y < ui_bar_h()) {
             if (hit == BAR_HIT_DAYNIGHT)
                 toggle_night();
             else if (hit == BAR_HIT_LIGHT)
                 toggle_light();
+            else if (hit == BAR_HIT_BOOKS) {
+                ui_save_position();
+                config_save(&g_app.cfg);
+                ui_show_home();
+            }
             else if (hit == BAR_HIT_PAGES) {
                 const reader_engine *eng = engine_active();
                 if (eng)
@@ -433,7 +686,7 @@ void ui_on_show(void)
 {
     int sw = ScreenWidth();
     int sh = ScreenHeight();
-    bar_compute(&g_app.bar, sw, sh, CFG_BAR_HEIGHT);
+    bar_compute(&g_app.bar, sw, sh, ui_bar_h());
     if (g_app.screen == SCREEN_READING && engine_active() && g_app.page_buf) {
         /* Redraw cached buffer without reloading. */
         draw_reading(1);
@@ -446,6 +699,9 @@ void ui_on_hide(void)
 {
     ui_save_position();
     config_save(&g_app.cfg);
+    /* Home is about to draw. Record the open book again so its cover is current. */
+    if (g_app.open_path[0])
+        notify_system_book(g_app.open_path);
 }
 
 void ui_on_orientation(void)
@@ -454,8 +710,8 @@ void ui_on_orientation(void)
     char pos[ENGINE_POS_MAX];
     int sw = ScreenWidth();
     int sh = ScreenHeight();
-    int page_h = sh - CFG_BAR_HEIGHT;
-    bar_compute(&g_app.bar, sw, sh, CFG_BAR_HEIGHT);
+    int page_h = sh - ui_bar_h();
+    bar_compute(&g_app.bar, sw, sh, ui_bar_h());
     if (!eng)
         return;
     if (eng->get_position(pos, sizeof(pos)) != 0)
@@ -473,14 +729,13 @@ void ui_on_orientation(void)
 void ui_init(void)
 {
     memset(&g_app, 0, sizeof(g_app));
+    reader_log("ui_init: start");
     config_load(&g_app.cfg);
     refresh_init();
-    g_app.font_bar = OpenFont("LiberationSans", 22, 0);
-    g_app.font_ui = OpenFont("LiberationSans", 28, 0);
-    g_app.font_msg = OpenFont("LiberationSans", 36, 1);
-    if (!g_app.font_bar) g_app.font_bar = OpenFont("LiberationSans", 20, 0);
-    if (!g_app.font_ui) g_app.font_ui = OpenFont("LiberationSans", 24, 0);
-    if (!g_app.font_msg) g_app.font_msg = OpenFont("LiberationSans", 28, 0);
+    ui_apply_fonts();
+    if (!g_app.font_bar || !g_app.font_ui || !g_app.font_msg)
+        reader_log("ui_init: OpenFont returned NULL (bar=%p ui=%p msg=%p)",
+                   (void *)g_app.font_bar, (void *)g_app.font_ui, (void *)g_app.font_msg);
 
     g_app.light_available = frontlight_available();
     if (g_app.light_available) {
@@ -497,12 +752,15 @@ void ui_init(void)
         }
     }
 
-    engine_global_init(CFG_CACHE_DIR, CFG_FONTS_DIR);
+    /* Do not init crengine/MuPDF here — that was crashing before any UI paint. */
     if (g_app.cfg.last_book[0])
         snprintf(g_app.last_book, sizeof(g_app.last_book), "%s", g_app.cfg.last_book);
-    bar_compute(&g_app.bar, ScreenWidth(), ScreenHeight(), CFG_BAR_HEIGHT);
+    bar_compute(&g_app.bar, ScreenWidth(), ScreenHeight(), ui_bar_h());
     update_clock_string();
     SetHardTimer("clock", ui_tick_clock, 60000);
+    g_app.screen = SCREEN_HOME;
+    reader_log("ui_init: ready screen=%d sw=%d sh=%d", g_app.screen,
+               ScreenWidth(), ScreenHeight());
 }
 
 void ui_shutdown(void)
@@ -517,26 +775,63 @@ void ui_shutdown(void)
     g_app.books = NULL;
     free(g_app.toc);
     g_app.toc = NULL;
+    if (g_body_font) {
+        CloseFont(g_body_font);
+        g_body_font = NULL;
+    }
     if (g_app.font_bar) CloseFont(g_app.font_bar);
     if (g_app.font_ui) CloseFont(g_app.font_ui);
     if (g_app.font_msg) CloseFont(g_app.font_msg);
 }
 
 static char g_launch_path[512];
+static int g_opened_launch;
+static int g_resumed_last;
+
+static int last_book_readable(const char **out_path)
+{
+    const char *path = g_app.cfg.last_book[0] ? g_app.cfg.last_book : g_app.last_book;
+    FILE *fp;
+    if (out_path)
+        *out_path = NULL;
+    if (!path || !path[0])
+        return 0;
+    fp = fopen(path, "rb");
+    if (!fp)
+        return 0;
+    fclose(fp);
+    if (out_path)
+        *out_path = path;
+    return 1;
+}
 
 static int main_handler(int type, int par1, int par2)
 {
     switch (type) {
     case EVT_INIT:
+        boot_marker("naskilla: EVT_INIT");
+        /* Match working apps: only init here. Never FullUpdate/Wait in INIT. */
         SetPanelType(0);
         ui_init();
-        if (g_launch_path[0])
-            ui_open_book(g_launch_path);
-        else
-            ui_show_home();
+        boot_marker("naskilla: ui_init done");
         break;
     case EVT_SHOW:
-        ui_on_show();
+        boot_marker("naskilla: EVT_SHOW");
+        if (g_launch_path[0] && !g_opened_launch) {
+            g_opened_launch = 1;
+            g_resumed_last = 1;
+            ui_open_book(g_launch_path);
+        } else if (!g_resumed_last) {
+            const char *resume = NULL;
+            g_resumed_last = 1;
+            if (last_book_readable(&resume))
+                ui_open_book(resume);
+            else
+                ui_on_show();
+        } else {
+            ui_on_show();
+        }
+        boot_marker("naskilla: EVT_SHOW done");
         break;
     case EVT_HIDE:
         ui_on_hide();
@@ -561,9 +856,18 @@ static int main_handler(int type, int par1, int par2)
 
 int main(int argc, char **argv)
 {
+    /* If this never appears on disk, the dynamic loader died before main
+     * (missing .so) or a C++ static constructor aborted. */
+    boot_marker("naskilla: main entered");
+
     g_launch_path[0] = '\0';
+    g_opened_launch = 0;
+    g_resumed_last = 0;
     if (argc > 1 && argv[1] && argv[1][0])
         snprintf(g_launch_path, sizeof(g_launch_path), "%s", argv[1]);
+    reader_log("boot: InkViewMain path=%s", g_launch_path[0] ? g_launch_path : "(none)");
+    boot_marker("naskilla: calling InkViewMain");
     InkViewMain(main_handler);
+    boot_marker("naskilla: InkViewMain returned");
     return 0;
 }
