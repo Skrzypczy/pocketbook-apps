@@ -22,6 +22,10 @@ if not exist "build\Vault.app" (
     popd
     exit /b 1
 )
+if not exist "build\Reader.app" (
+    echo WARNING: build\Reader.app missing - Reader will not be installed.
+    echo Run scripts\build.bat to build the reader.
+)
 
 REM Check if PocketBook is connected
 set POCKETBOOK_DRIVE=
@@ -93,6 +97,38 @@ if errorlevel 1 (
     set /a SUCCESS+=1
 )
 
+echo Installing Reader.app...
+copy /Y "build\Reader.app" "%POCKETBOOK_DRIVE%\applications\" >nul 2>&1
+if errorlevel 1 (
+    echo   FAILED - Make sure build\Reader.app exists ^(run scripts\build.bat^)
+    set /a FAILED+=1
+) else (
+    echo   OK
+    set /a SUCCESS+=1
+)
+
+REM Backup extensions.cfg once, then prefer Reader for supported types
+echo Registering Reader in extensions.cfg...
+set EXTCFG=%POCKETBOOK_DRIVE%\system\config\extensions.cfg
+if not exist "%EXTCFG%" (
+    echo   SKIP - extensions.cfg not found
+    set /a SKIPPED+=1
+    goto :after_extcfg
+)
+if not exist "%EXTCFG%.simple-reader-bak" (
+    copy /Y "%EXTCFG%" "%EXTCFG%.simple-reader-bak" >nul 2>&1
+    echo   Backup created: extensions.cfg.simple-reader-bak
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%register_reader.ps1" -ExtCfg "%EXTCFG%"
+if errorlevel 1 (
+    echo   FAILED - could not update extensions.cfg
+    set /a FAILED+=1
+) else (
+    echo   OK
+    set /a SUCCESS+=1
+)
+:after_extcfg
+
 REM Copy API key for AI apps from config folder
 echo Installing API key...
 if not exist "config\.ai_api_key" (
@@ -158,6 +194,8 @@ echo Installed to %POCKETBOOK_DRIVE%
 echo   - applications\Vault.app
 echo   - applications\AISearch.app
 echo   - applications\Chef.app
+echo   - applications\Reader.app
+echo   - system\config\extensions.cfg (Reader first for epub/fb2/txt/html/rtf/pdf; backup .simple-reader-bak)
 echo   - .ai_api_key (for AISearch and Chef)
 echo   - system\fonts\Bookerly*.ttf (Amazon Kindle font)
 echo   - system\logo\offlogo\Nature.png (power-off logo)

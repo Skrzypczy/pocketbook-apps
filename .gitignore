@@ -2,6 +2,12 @@
 build/
 *.app
 
+# Large engine archives / MuPDF source (~300MB; fetched by build_reader.sh)
+third_party/*.tar.gz
+third_party/*.tar.lz
+third_party/mupdf-*-source/
+third_party/mupdf/
+
 # Sensitive files - NEVER commit
 config/.ai_api_key
 .ai_api_key

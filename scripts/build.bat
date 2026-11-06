@@ -46,6 +46,16 @@ if errorlevel 1 (
     echo   OK
 )
 
+echo Building Reader.app (crengine + MuPDF)...
+docker run --rm -v "%cd%:/src" -w /src --entrypoint /bin/bash ^
+  larento/pocketbook-sdk:5.19-a13 ^
+  /src/scripts/build_reader.sh
+if errorlevel 1 (
+    echo   FAILED
+) else (
+    echo   OK
+)
+
 REM Download Bookerly fonts if not already cached
 echo.
 echo Downloading Bookerly fonts...

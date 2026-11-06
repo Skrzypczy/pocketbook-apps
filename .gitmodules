@@ -1,0 +1,3 @@
+[submodule "third_party/crengine"]
+	path = third_party/crengine
+	url = https://github.com/koreader/crengine.git

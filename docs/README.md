@@ -1,6 +1,48 @@
 # PocketBook Apps
 
-Three custom applications for PocketBook e-readers (tested on PocketBook Era).
+Four custom applications for PocketBook e-readers (tested on PocketBook Era).
+
+---
+
+## Reader
+
+Simple production ebook reader with a minimal top bar and one settings page. Reflowable books use crengine (KOReader pin); PDF uses MuPDF 1.27.2. AGPL-3.0.
+
+### Top bar
+
+| Control | Action |
+|---------|--------|
+| Clock | Time only (not tappable) |
+| Day / Night | Invert page colors + full refresh |
+| Light on / off | Frontlight toggle (brightness remembered) |
+| `page / total` | Opens settings |
+
+Page body: left third = previous page, right two-thirds = next. Hardware NEXT/PREV keys do the same. BACK saves position and exits.
+
+### Settings
+
+Font face/size, margins, line spacing, publisher layout, go to page, contents, brightness, warmth, full-refresh interval, day/night. On PDF, reflow-only rows are hidden.
+
+### Formats
+
+EPUB, FB2, FB2.ZIP, TXT, HTML, RTF, PDF. DRM, MOBI, AZW, DJVU, comics stay on the stock reader.
+
+### Home browser
+
+- **Continue reading** — last opened book (position restored)
+- **Send to PocketBook** — books in `SendToPocketBook` / `SendToPb` / `Send to PocketBook`
+- **Library (Books)** — recursive scan of `/mnt/ext1/Books`
+- **Smart suggestion** — Gemini picks 3 titles from those folders (Continue series / Same theme / Something different). Uses `/mnt/ext1/.ai_api_key` (same file as AISearch/Chef).
+
+Reading progress is saved per book on every page turn, sleep, and Back. Back from a book returns to Home.
+
+### Config
+
+`/mnt/ext1/.simple_reader.cfg` — global settings, `last_book`, and per-book positions. Install backs up `system/config/extensions.cfg` to `extensions.cfg.simple-reader-bak` and registers `Reader.app` first for supported types.
+
+### Engine notes
+
+See [apps/Reader/ENGINE.md](../apps/Reader/ENGINE.md) for pinned commits, SDK fallback, and the on-device release checklist.
 
 ---
 
@@ -321,7 +363,13 @@ For Vault:
 # Build all apps (from repo root)
 scripts\build.bat
 
-# Output: build\Vault.app, build\AISearch.app, build\Chef.app
+# Output: build\Vault.app, build\AISearch.app, build\Chef.app, build\Reader.app
+```
+
+Reader host checks (no device):
+
+```bat
+scripts\test_reader_host.bat
 ```
 
 Manual build (single app):
@@ -343,7 +391,8 @@ pocketbook-apps/
 ├── apps/                    # Source code
 │   ├── Vault/Vault.c
 │   ├── AISearch/AISearch.c
-│   └── Chef/Chef.c
+│   ├── Chef/Chef.c
+│   └── Reader/           # Simple reader (crengine + MuPDF)
 ├── config/                  # Configuration files
 │   └── .ai_api_key
 ├── docs/                    # Documentation
