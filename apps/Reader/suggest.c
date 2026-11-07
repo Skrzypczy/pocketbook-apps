@@ -6,9 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <zlib.h>
 
+#include <curl/curl.h>
 #include "inkview.h"
+
+#define GEMINI_URL_BASE "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key="
 
 static int ends_with_ci(const char *name, const char *suf)
 {
@@ -36,25 +38,6 @@ static int is_book_name(const char *name)
            ends_with_ci(name, ".rtf") || ends_with_ci(name, ".pdf");
 }
 
-static void parent_dir(const char *path, char *out, size_t outlen)
-{
-    const char *slash;
-    size_t n;
-    if (!out || outlen == 0)
-        return;
-    out[0] = '\0';
-    if (!path)
-        return;
-    slash = strrchr(path, '/');
-    if (!slash || slash == path)
-        return;
-    n = (size_t)(slash - path);
-    if (n >= outlen)
-        n = outlen - 1;
-    memcpy(out, path, n);
-    out[n] = '\0';
-}
-
 static int already_suggested(const char *path)
 {
     int i;
@@ -71,7 +54,6 @@ static void add_suggestion(const char *path, const char *reason)
     char base[256];
     const char *slash;
     const char *dot;
-    const char *sep;
     size_t n;
     if (!path || !path[0] || g_app.suggest_count >= 5)
         return;
@@ -84,63 +66,20 @@ static void add_suggestion(const char *path, const char *reason)
     snprintf(h->path, sizeof(h->path), "%s", path);
     if (reason)
         snprintf(h->reason, sizeof(h->reason), "%s", reason);
-    slash = strrchr(path, '/');
-    slash = slash ? slash + 1 : path;
-    dot = strrchr(slash, '.');
-    n = dot && dot > slash ? (size_t)(dot - slash) : strlen(slash);
-    if (n >= sizeof(base))
-        n = sizeof(base) - 1;
-    memcpy(base, slash, n);
-    base[n] = '\0';
-    sep = strstr(base, " - ");
-    if (sep) {
-        size_t tlen = (size_t)(sep - base);
-        if (tlen >= sizeof(h->title))
-            tlen = sizeof(h->title) - 1;
-        memcpy(h->title, base, tlen);
-        h->title[tlen] = '\0';
-        snprintf(h->author, sizeof(h->author), "%s", sep + 3);
-    } else {
+    book_names_from_path(path, h->title, sizeof(h->title),
+                         h->author, sizeof(h->author), NULL, 0, NULL);
+    if (!h->title[0]) {
+        slash = strrchr(path, '/');
+        slash = slash ? slash + 1 : path;
+        dot = strrchr(slash, '.');
+        n = dot && dot > slash ? (size_t)(dot - slash) : strlen(slash);
+        if (n >= sizeof(base))
+            n = sizeof(base) - 1;
+        memcpy(base, slash, n);
+        base[n] = '\0';
         snprintf(h->title, sizeof(h->title), "%s", base);
     }
-    {
-        /* A handful of results, so reading the real title is cheap.
-         * Send-to files are stored under hash names. */
-        bookinfo *info = GetBookInfo(path);
-        if (info && info->title && info->title[0])
-            snprintf(h->title, sizeof(h->title), "%s", info->title);
-        if (info && info->author && info->author[0])
-            snprintf(h->author, sizeof(h->author), "%s", info->author);
-    }
     g_app.suggest_count++;
-}
-
-static void collect_books(const char *dir, int depth, int max_depth,
-                          const char *skip_dir, const char *reason, int limit)
-{
-    DIR *d;
-    struct dirent *ent;
-    if (!dir || !dir[0] || depth > max_depth || g_app.suggest_count >= limit)
-        return;
-    d = opendir(dir);
-    if (!d)
-        return;
-    while ((ent = readdir(d)) != NULL && g_app.suggest_count < limit) {
-        char path[768];
-        struct stat st;
-        if (ent->d_name[0] == '.')
-            continue;
-        if (skip_dir && strcmp(ent->d_name, skip_dir) == 0)
-            continue;
-        snprintf(path, sizeof(path), "%s/%s", dir, ent->d_name);
-        if (stat(path, &st) != 0)
-            continue;
-        if (S_ISDIR(st.st_mode))
-            collect_books(path, depth + 1, max_depth, NULL, reason, limit);
-        else if (S_ISREG(st.st_mode) && is_book_name(ent->d_name))
-            add_suggestion(path, reason);
-    }
-    closedir(d);
 }
 
 static const char *current_book_path(void)
@@ -154,942 +93,589 @@ static const char *current_book_path(void)
     return NULL;
 }
 
-/* Library files live at .../_Categories/<shelf>/<author>/<book>/file. */
-static int split_library_path(const char *path,
-                              char *categories, size_t categories_n,
-                              char *shelf, size_t shelf_n,
-                              char *author, size_t author_n)
-{
-    const char *mark;
-    const char *p;
-    const char *shelf_s;
-    const char *author_s;
-    const char *book_s;
-    char tmp[512];
-    if (!path)
-        return 0;
-    mark = strstr(path, "/_Categories/");
-    if (!mark)
-        return 0;
-    p = mark + strlen("/_Categories/");
-    shelf_s = p;
-    author_s = strchr(p, '/');
-    if (!author_s || author_s == shelf_s)
-        return 0;
-    book_s = strchr(author_s + 1, '/');
-    if (!book_s)
-        return 0;
-    snprintf(categories, categories_n, "%.*s", (int)(mark - path + strlen("/_Categories")), path);
-    snprintf(tmp, sizeof(tmp), "%.*s", (int)(author_s - shelf_s), shelf_s);
-    snprintf(shelf, shelf_n, "%s/%s", categories, tmp);
-    snprintf(tmp, sizeof(tmp), "%.*s", (int)(book_s - (author_s + 1)), author_s + 1);
-    snprintf(author, author_n, "%s/%s", shelf, tmp);
-    return 1;
-}
-
-typedef struct series_cand {
+typedef struct cat_entry {
     char path[512];
     char title[160];
     char author[80];
-    int index_x100;
-} series_cand;
+} cat_entry;
 
-static series_cand g_series[96];
-static int g_series_n;
-static int g_opf_seen;
-static int g_title_lookup;
-static int g_title_found;
-static int g_title_index;
-static char g_title_want[160];
-static char g_title_series[160];
-
-static void fold_space(const char *src, char *dst, size_t n)
+static void paint_wait(const char *msg)
 {
-    size_t j = 0;
-    int sp = 1;
-    if (!dst || n == 0)
-        return;
-    if (!src)
-        src = "";
-    for (; *src && j + 1 < n; src++) {
-        char c = *src;
-        if (c >= 'A' && c <= 'Z')
-            c = (char)(c - 'A' + 'a');
-        if (c == ' ' || c == '\t') {
-            if (sp)
-                continue;
-            sp = 1;
-            dst[j++] = ' ';
-            continue;
-        }
-        sp = 0;
-        dst[j++] = c;
-    }
-    while (j > 0 && dst[j - 1] == ' ')
-        j--;
-    dst[j] = '\0';
+    int sw = ScreenWidth();
+    int sh = ScreenHeight();
+    int fg = g_app.cfg.night ? WHITE : BLACK;
+    int bg = g_app.cfg.night ? BLACK : WHITE;
+    ClearScreen();
+    FillArea(0, 0, sw, sh, bg);
+    if (g_app.font_msg)
+        SetFont(g_app.font_msg, fg);
+    DrawTextRect(0, sh / 2 - 30, sw, 60, msg, ALIGN_CENTER | VALIGN_MIDDLE);
+    PartialUpdate(0, sh / 2 - 40, sw, 80);
 }
 
-static int series_eq(const char *a, const char *b)
-{
-    char fa[160], fb[160];
-    size_t na, nb;
-    fold_space(a, fa, sizeof(fa));
-    fold_space(b, fb, sizeof(fb));
-    if (!fa[0] || !fb[0])
-        return 0;
-    if (strcmp(fa, fb) == 0)
-        return 1;
-    /* "James Bond" and "James Bond Original Series" are the same shelf. */
-    na = strlen(fa);
-    nb = strlen(fb);
-    if (na >= 8 && nb > na && strstr(fb, fa))
-        return 1;
-    if (nb >= 8 && na > nb && strstr(fa, fb))
-        return 1;
-    return 0;
-}
-
-static int title_eq(const char *a, const char *b)
-{
-    char fa[160], fb[160];
-    fold_space(a, fa, sizeof(fa));
-    fold_space(b, fb, sizeof(fb));
-    return fa[0] && strcmp(fa, fb) == 0;
-}
-
-static void xml_unescape(char *s)
-{
-    char *r;
-    char *w;
-    if (!s)
-        return;
-    r = w = s;
-    while (*r) {
-        if (*r == '&') {
-            if (strncmp(r, "&amp;", 5) == 0) {
-                *w++ = '&';
-                r += 5;
-                continue;
-            }
-            if (strncmp(r, "&lt;", 4) == 0) {
-                *w++ = '<';
-                r += 4;
-                continue;
-            }
-            if (strncmp(r, "&gt;", 4) == 0) {
-                *w++ = '>';
-                r += 4;
-                continue;
-            }
-            if (strncmp(r, "&quot;", 6) == 0) {
-                *w++ = '"';
-                r += 6;
-                continue;
-            }
-            if (strncmp(r, "&apos;", 6) == 0) {
-                *w++ = '\'';
-                r += 6;
-                continue;
-            }
-        }
-        *w++ = *r++;
-    }
-    *w = '\0';
-}
-
-static int attr_in(const char *start, const char *end, const char *key,
-                   char *out, size_t outlen)
-{
-    char pat[64];
-    const char *p;
-    const char *q;
-    size_t klen;
-    size_t n;
-    if (!out || outlen == 0)
-        return 0;
-    out[0] = '\0';
-    snprintf(pat, sizeof(pat), "%s=", key);
-    klen = strlen(pat);
-    for (p = start; p + klen < end; p++) {
-        char quote;
-        if (memcmp(p, pat, klen) != 0)
-            continue;
-        p += klen;
-        while (p < end && (*p == ' ' || *p == '\t'))
-            p++;
-        if (p >= end || (*p != '"' && *p != '\''))
-            continue;
-        quote = *p++;
-        q = memchr(p, quote, (size_t)(end - p));
-        if (!q)
-            return 0;
-        n = (size_t)(q - p);
-        if (n >= outlen)
-            n = outlen - 1;
-        memcpy(out, p, n);
-        out[n] = '\0';
-        xml_unescape(out);
-        return 1;
-    }
-    return 0;
-}
-
-static int parse_index_x100(const char *text)
-{
-    int whole = 0;
-    int frac = 0;
-    int digits = 0;
-    if (!text || !text[0])
-        return 0;
-    if (sscanf(text, "%d.%d", &whole, &frac) >= 1) {
-        /* Keep two digits of the fraction: 3.5 -> 350, 3 -> 300. */
-        if (frac > 0) {
-            int v = frac;
-            digits = 0;
-            while (v > 0 && digits < 4) {
-                v /= 10;
-                digits++;
-            }
-            while (digits < 2) {
-                frac *= 10;
-                digits++;
-            }
-            while (digits > 2) {
-                frac /= 10;
-                digits--;
-            }
-        }
-        return whole * 100 + frac;
-    }
-    return 0;
-}
-
-static void xml_text_of(const char *buf, const char *tag, char *out, size_t outlen)
-{
-    char open[32];
-    const char *p;
-    const char *gt;
-    const char *end;
-    size_t n;
-    if (!out || outlen == 0)
-        return;
-    out[0] = '\0';
-    snprintf(open, sizeof(open), "<%s", tag);
-    p = strstr(buf, open);
-    if (!p)
-        return;
-    gt = strchr(p, '>');
-    if (!gt)
-        return;
-    gt++;
-    end = strstr(gt, "</");
-    if (!end || end < gt)
-        return;
-    n = (size_t)(end - gt);
-    if (n >= outlen)
-        n = outlen - 1;
-    memcpy(out, gt, n);
-    out[n] = '\0';
-    xml_unescape(out);
-}
-
-/* Descriptions in Calibre metadata.opf often push the series tags well
- * past the first few kilobytes. Keep one buffer and scan the whole file. */
-static char g_opf_buf[256 * 1024];
-
-static void parse_opf_mem(const char *buf, char *series, size_t series_n,
-                          int *index_x100, char *title, size_t title_n,
-                          char *author, size_t author_n)
-{
-    const char *p;
-    int series_from_calibre = 0;
-    if (!buf)
-        return;
-    if (title && title_n && !title[0])
-        xml_text_of(buf, "dc:title", title, title_n);
-    if (author && author_n && !author[0])
-        xml_text_of(buf, "dc:creator", author, author_n);
-    p = buf;
-    while ((p = strstr(p, "<meta"))) {
-        const char *end = strchr(p, '>');
-        const char *text_end;
-        char name[80];
-        char content[160];
-        int self_close;
-        if (!end)
-            break;
-        name[0] = content[0] = '\0';
-        if (!attr_in(p, end, "name", name, sizeof(name)))
-            attr_in(p, end, "property", name, sizeof(name));
-        attr_in(p, end, "content", content, sizeof(content));
-        self_close = (end > p && end[-1] == '/');
-        if (!content[0] && !self_close) {
-            text_end = strstr(end + 1, "</meta>");
-            if (text_end && (size_t)(text_end - (end + 1)) < sizeof(content)) {
-                size_t n = (size_t)(text_end - (end + 1));
-                memcpy(content, end + 1, n);
-                content[n] = '\0';
-                xml_unescape(content);
-            }
-        }
-        if (series && series_n && !series_from_calibre &&
-            strcmp(name, "calibre:series") == 0 && content[0]) {
-            snprintf(series, series_n, "%s", content);
-            series_from_calibre = 1;
-        } else if (series && series_n && !series[0] &&
-                   strcmp(name, "belongs-to-collection") == 0 && content[0]) {
-            snprintf(series, series_n, "%s", content);
-        }
-        if (index_x100 && strcmp(name, "calibre:series_index") == 0) {
-            int v = parse_index_x100(content);
-            if (v)
-                *index_x100 = v;
-        } else if (index_x100 && *index_x100 == 0 &&
-                   strcmp(name, "group-position") == 0) {
-            int v = parse_index_x100(content);
-            if (v)
-                *index_x100 = v;
-        }
-        p = end + 1;
-    }
-}
-
-static int read_opf_path(const char *opf_path, char *series, size_t series_n,
-                         int *index_x100, char *title, size_t title_n,
-                         char *author, size_t author_n)
+static int load_api_key(char *key, size_t key_n)
 {
     FILE *fp;
-    size_t nread;
-    size_t keep = 0;
-    if (series && series_n)
-        series[0] = '\0';
-    if (title && title_n)
-        title[0] = '\0';
-    if (author && author_n)
-        author[0] = '\0';
-    if (index_x100)
-        *index_x100 = 0;
-    fp = fopen(opf_path, "rb");
+    size_t n;
+    if (!key || key_n == 0)
+        return 0;
+    key[0] = '\0';
+    fp = fopen(CFG_API_KEY_FILE, "r");
     if (!fp)
         return 0;
-    for (;;) {
-        size_t room = sizeof(g_opf_buf) - 1 - keep;
-        nread = fread(g_opf_buf + keep, 1, room, fp);
-        g_opf_buf[keep + nread] = '\0';
-        parse_opf_mem(g_opf_buf, series, series_n, index_x100,
-                      title, title_n, author, author_n);
-        if (series && series[0] && (!index_x100 || *index_x100))
-            break;
-        if (nread < room)
-            break;
-        /* Whole buffer used and the series tag is still ahead. */
-        memmove(g_opf_buf, g_opf_buf + keep + nread - 400, 400);
-        keep = 400;
+    if (!fgets(key, (int)key_n, fp)) {
+        fclose(fp);
+        key[0] = '\0';
+        return 0;
     }
     fclose(fp);
-    return series && series[0];
-}
-
-static unsigned rd16(const unsigned char *p)
-{
-    return (unsigned)p[0] | ((unsigned)p[1] << 8);
-}
-
-static unsigned rd32(const unsigned char *p)
-{
-    return (unsigned)p[0] | ((unsigned)p[1] << 8) |
-           ((unsigned)p[2] << 16) | ((unsigned)p[3] << 24);
-}
-
-static int name_ends(const char *name, size_t nlen, const char *suf)
-{
-    size_t sl = strlen(suf);
-    size_t i;
-    if (nlen < sl)
+    n = strlen(key);
+    while (n > 0 && (key[n - 1] == '\n' || key[n - 1] == '\r' || key[n - 1] == ' '))
+        key[--n] = '\0';
+    if (n < 20 || strncmp(key, "YOUR_", 5) == 0) {
+        key[0] = '\0';
         return 0;
-    for (i = 0; i < sl; i++) {
-        char a = name[nlen - sl + i];
-        char b = suf[i];
-        if (a >= 'A' && a <= 'Z')
-            a = (char)(a - 'A' + 'a');
-        if (b >= 'A' && b <= 'Z')
-            b = (char)(b - 'A' + 'a');
-        if (a != b)
-            return 0;
     }
     return 1;
 }
 
-/* Inflate one ZIP entry into g_opf_buf. Sizes come from the central directory. */
-static int zip_read_entry(FILE *fp, unsigned local, unsigned method,
-                          unsigned comp, unsigned uncomp)
+static int ensure_wifi(void)
 {
-    unsigned char lh[30];
-    unsigned name_len;
-    unsigned extra_len;
-    unsigned char *compbuf;
-    size_t got;
-    (void)uncomp;
-    if (comp == 0 || comp > 1024 * 1024)
-        return 0;
-    if (fseek(fp, (long)local, SEEK_SET) != 0)
-        return 0;
-    if (fread(lh, 1, 30, fp) != 30 || rd32(lh) != 0x04034b50u)
-        return 0;
-    name_len = rd16(lh + 26);
-    extra_len = rd16(lh + 28);
-    if (fseek(fp, (long)(name_len + extra_len), SEEK_CUR) != 0)
-        return 0;
-    if (method == 0) {
-        size_t n = comp;
-        if (n >= sizeof(g_opf_buf))
-            n = sizeof(g_opf_buf) - 1;
-        if (fread(g_opf_buf, 1, n, fp) != n)
-            return 0;
-        g_opf_buf[n] = '\0';
+    iv_netinfo *net = NetInfo();
+    if (net && net->connected)
         return 1;
-    }
-    if (method != 8)
+    paint_wait("Connecting to Wi-Fi");
+    if (NetConnect2(NULL, 1) != 0)
         return 0;
-    compbuf = (unsigned char *)malloc(comp);
-    if (!compbuf)
-        return 0;
-    if (fread(compbuf, 1, comp, fp) != comp) {
-        free(compbuf);
-        return 0;
-    }
-    {
-        z_stream strm;
-        int rc;
-        memset(&strm, 0, sizeof(strm));
-        if (inflateInit2(&strm, -15) != Z_OK) {
-            free(compbuf);
-            return 0;
-        }
-        strm.next_in = compbuf;
-        strm.avail_in = comp;
-        strm.next_out = (unsigned char *)g_opf_buf;
-        strm.avail_out = (unsigned)(sizeof(g_opf_buf) - 1);
-        rc = inflate(&strm, Z_FINISH);
-        got = strm.total_out;
-        inflateEnd(&strm);
-        free(compbuf);
-        if (got == 0 || (rc != Z_STREAM_END && rc != Z_OK && rc != Z_BUF_ERROR))
-            return 0;
-        g_opf_buf[got] = '\0';
-        return 1;
-    }
+    net = NetInfo();
+    return net && net->connected;
 }
 
-/* Books copied into SendToPb have no sidecar. The series is inside the epub. */
-static int read_epub_series(const char *book_path, char *series, size_t series_n,
-                            int *index_x100)
+typedef struct curl_buf {
+    char *data;
+    size_t size;
+} curl_buf;
+
+static size_t curl_write(void *ptr, size_t size, size_t nmemb, void *userdata)
 {
-    FILE *fp;
-    unsigned char *tail = NULL;
-    unsigned char *cd = NULL;
-    long sz;
-    size_t ntail;
-    long start;
+    curl_buf *buf = (curl_buf *)userdata;
+    size_t bytes = size * nmemb;
+    char *next;
+    if (!buf || bytes == 0)
+        return 0;
+    next = (char *)realloc(buf->data, buf->size + bytes + 1);
+    if (!next)
+        return 0;
+    buf->data = next;
+    memcpy(buf->data + buf->size, ptr, bytes);
+    buf->size += bytes;
+    buf->data[buf->size] = '\0';
+    return bytes;
+}
+
+static char *json_escape(const char *src)
+{
+    size_t extra = 0;
+    size_t i;
+    size_t j = 0;
+    char *dst;
+    const unsigned char *s = (const unsigned char *)(src ? src : "");
+    for (i = 0; s[i]; i++) {
+        if (s[i] == '"' || s[i] == '\\' || s[i] == '\n' || s[i] == '\r')
+            extra++;
+    }
+    dst = (char *)malloc(i + extra + 1);
+    if (!dst)
+        return NULL;
+    for (i = 0; s[i]; i++) {
+        if (s[i] == '"' || s[i] == '\\') {
+            dst[j++] = '\\';
+            dst[j++] = (char)s[i];
+        } else if (s[i] == '\n') {
+            dst[j++] = '\\';
+            dst[j++] = 'n';
+        } else if (s[i] == '\r') {
+            continue;
+        } else if (s[i] < 32) {
+            continue;
+        } else {
+            dst[j++] = (char)s[i];
+        }
+    }
+    dst[j] = '\0';
+    return dst;
+}
+
+static int cat_add(cat_entry **cat, int *n, int *cap, const char *path,
+                   const char *skip)
+{
+    cat_entry *e;
     int i;
-    unsigned cd_off = 0;
-    unsigned cd_size = 0;
-    int found_eocd = 0;
-    char opf_name[512];
-    unsigned opf_local = 0, opf_method = 0, opf_comp = 0, opf_uncomp = 0;
-    int have_opf = 0;
-    int ok = 0;
-    if (!book_path || !ends_with_ci(book_path, ".epub"))
+    if (!path || !path[0] || !cat || !n || !cap)
         return 0;
-    fp = fopen(book_path, "rb");
-    if (!fp)
+    if (skip && strcmp(path, skip) == 0)
         return 0;
-    if (fseek(fp, 0, SEEK_END) != 0)
-        goto done;
-    sz = ftell(fp);
-    if (sz < 22)
-        goto done;
-    ntail = (size_t)(sz > 65536 ? 65536 : sz);
-    tail = (unsigned char *)malloc(ntail);
-    if (!tail)
-        goto done;
-    start = sz - (long)ntail;
-    if (fseek(fp, start, SEEK_SET) != 0 || fread(tail, 1, ntail, fp) != ntail)
-        goto done;
-    for (i = (int)ntail - 22; i >= 0; i--) {
-        if (tail[i] == 0x50 && tail[i + 1] == 0x4b &&
-            tail[i + 2] == 0x05 && tail[i + 3] == 0x06) {
-            cd_size = rd32(tail + i + 12);
-            cd_off = rd32(tail + i + 16);
-            found_eocd = 1;
-            break;
-        }
+    for (i = 0; i < *n; i++) {
+        if (strcmp((*cat)[i].path, path) == 0)
+            return 0;
     }
-    free(tail);
-    tail = NULL;
-    if (!found_eocd || cd_size == 0 || cd_size > 2 * 1024 * 1024)
-        goto done;
-    cd = (unsigned char *)malloc(cd_size);
-    if (!cd)
-        goto done;
-    if (fseek(fp, (long)cd_off, SEEK_SET) != 0 || fread(cd, 1, cd_size, fp) != cd_size)
-        goto done;
-    opf_name[0] = '\0';
-    {
-        size_t pos = 0;
-        unsigned c_local = 0, c_method = 0, c_comp = 0, c_uncomp = 0;
-        int have_container = 0;
-        while (pos + 46 <= cd_size) {
-            unsigned method, comp, uncomp, namelen, extralen, commentlen, local;
-            char name[512];
-            if (rd32(cd + pos) != 0x02014b50u)
-                break;
-            method = rd16(cd + pos + 10);
-            comp = rd32(cd + pos + 20);
-            uncomp = rd32(cd + pos + 24);
-            namelen = rd16(cd + pos + 28);
-            extralen = rd16(cd + pos + 30);
-            commentlen = rd16(cd + pos + 32);
-            local = rd32(cd + pos + 42);
-            if (namelen < sizeof(name)) {
-                memcpy(name, cd + pos + 46, namelen);
-                name[namelen] = '\0';
-            } else {
-                name[0] = '\0';
-            }
-            if (!have_container && name_ends(name, namelen < sizeof(name) ? namelen : 0,
-                                            "container.xml")) {
-                c_local = local;
-                c_method = method;
-                c_comp = comp;
-                c_uncomp = uncomp;
-                have_container = 1;
-            }
-            if (!have_opf && name[0] && name_ends(name, strlen(name), ".opf")) {
-                snprintf(opf_name, sizeof(opf_name), "%s", name);
-                opf_local = local;
-                opf_method = method;
-                opf_comp = comp;
-                opf_uncomp = uncomp;
-                have_opf = 1;
-            }
-            pos += 46u + namelen + extralen + commentlen;
-        }
-        if (have_container &&
-            zip_read_entry(fp, c_local, c_method, c_comp, c_uncomp)) {
-            const char *fp_attr = strstr(g_opf_buf, "full-path=\"");
-            char quote = '"';
-            if (!fp_attr) {
-                fp_attr = strstr(g_opf_buf, "full-path='");
-                quote = '\'';
-            }
-            if (fp_attr) {
-                const char *s = strchr(fp_attr, quote);
-                const char *e;
-                if (s) {
-                    s++;
-                    e = strchr(s, quote);
-                    if (e && (size_t)(e - s) < sizeof(opf_name)) {
-                        char want[512];
-                        size_t pos2 = 0;
-                        unsigned saved_local = opf_local;
-                        unsigned saved_method = opf_method;
-                        unsigned saved_comp = opf_comp;
-                        unsigned saved_uncomp = opf_uncomp;
-                        int saved_have = have_opf;
-                        memcpy(want, s, (size_t)(e - s));
-                        want[e - s] = '\0';
-                        have_opf = 0;
-                        while (pos2 + 46 <= cd_size) {
-                            unsigned namelen, extralen, commentlen;
-                            char name[512];
-                            if (rd32(cd + pos2) != 0x02014b50u)
-                                break;
-                            namelen = rd16(cd + pos2 + 28);
-                            extralen = rd16(cd + pos2 + 30);
-                            commentlen = rd16(cd + pos2 + 32);
-                            if (namelen < sizeof(name)) {
-                                memcpy(name, cd + pos2 + 46, namelen);
-                                name[namelen] = '\0';
-                                if (strcmp(name, want) == 0) {
-                                    opf_local = rd32(cd + pos2 + 42);
-                                    opf_method = rd16(cd + pos2 + 10);
-                                    opf_comp = rd32(cd + pos2 + 20);
-                                    opf_uncomp = rd32(cd + pos2 + 24);
-                                    have_opf = 1;
-                                    break;
-                                }
-                            }
-                            pos2 += 46u + namelen + extralen + commentlen;
-                        }
-                        if (!have_opf && saved_have) {
-                            have_opf = 1;
-                            opf_local = saved_local;
-                            opf_method = saved_method;
-                            opf_comp = saved_comp;
-                            opf_uncomp = saved_uncomp;
-                        }
-                    }
-                }
-            }
-        }
+    if (*n >= 8000)
+        return 0;
+    if (*n >= *cap) {
+        int next = *cap ? *cap * 2 : 256;
+        cat_entry *grown;
+        if (next > 8000)
+            next = 8000;
+        grown = (cat_entry *)realloc(*cat, (size_t)next * sizeof(cat_entry));
+        if (!grown)
+            return 0;
+        *cat = grown;
+        *cap = next;
     }
-    if (!have_opf)
-        goto done;
-    if (!zip_read_entry(fp, opf_local, opf_method, opf_comp, opf_uncomp))
-        goto done;
-    if (series && series_n)
-        series[0] = '\0';
-    if (index_x100)
-        *index_x100 = 0;
-    parse_opf_mem(g_opf_buf, series, series_n, index_x100, NULL, 0, NULL, 0);
-    ok = series && series[0];
-done:
-    free(tail);
-    free(cd);
-    fclose(fp);
-    return ok;
+    e = &(*cat)[*n];
+    memset(e, 0, sizeof(*e));
+    snprintf(e->path, sizeof(e->path), "%s", path);
+    book_names_from_path(path, e->title, sizeof(e->title),
+                         e->author, sizeof(e->author), NULL, 0, NULL);
+    if (!e->title[0]) {
+        const char *slash = strrchr(path, '/');
+        snprintf(e->title, sizeof(e->title), "%s", slash ? slash + 1 : path);
+    }
+    (*n)++;
+    return 1;
 }
 
-static int read_book_series(const char *book_path, char *series, size_t series_n,
-                            int *index_x100)
-{
-    char dir[512];
-    char opf[576];
-    bookinfo *info;
-    if (index_x100)
-        *index_x100 = 0;
-    if (series && series_n)
-        series[0] = '\0';
-    parent_dir(book_path, dir, sizeof(dir));
-    if (dir[0]) {
-        snprintf(opf, sizeof(opf), "%s/metadata.opf", dir);
-        if (read_opf_path(opf, series, series_n, index_x100, NULL, 0, NULL, 0) &&
-            series && series[0])
-            return 1;
-    }
-    if (read_epub_series(book_path, series, series_n, index_x100) &&
-        series && series[0])
-        return 1;
-    info = GetBookInfo(book_path);
-    if (info && info->series && info->series[0]) {
-        snprintf(series, series_n, "%s", info->series);
-        if (index_x100 && info->numinseries > 0)
-            *index_x100 = info->numinseries * 100;
-        return 1;
-    }
-    return 0;
-}
-
-static void add_series_cand(const char *epub, const char *title, const char *author,
-                            int index_x100)
-{
-    series_cand *c;
-    const char *cur = current_book_path();
-    if (!epub || !epub[0])
-        return;
-    if (cur && strcmp(cur, epub) == 0)
-        return;
-    if (g_series_n >= (int)(sizeof(g_series) / sizeof(g_series[0]))) {
-        int low = 0;
-        int i;
-        for (i = 1; i < g_series_n; i++) {
-            if (g_series[i].index_x100 < g_series[low].index_x100)
-                low = i;
-        }
-        /* Keep later volumes when the shelf has more copies than the list. */
-        if (index_x100 <= g_series[low].index_x100)
-            return;
-        c = &g_series[low];
-    } else {
-        c = &g_series[g_series_n++];
-    }
-    memset(c, 0, sizeof(*c));
-    snprintf(c->path, sizeof(c->path), "%s", epub);
-    if (title)
-        snprintf(c->title, sizeof(c->title), "%s", title);
-    if (author)
-        snprintf(c->author, sizeof(c->author), "%s", author);
-    c->index_x100 = index_x100;
-}
-
-static void consider_opf(const char *opf_path, const char *want)
-{
-    char series[160];
-    char title[160];
-    char author[80];
-    char dir[512];
-    int index_x100 = 0;
-    DIR *d;
-    struct dirent *ent;
-    if (!read_opf_path(opf_path, series, sizeof(series), &index_x100,
-                       title, sizeof(title), author, sizeof(author)))
-        return;
-    g_opf_seen++;
-    if (g_title_lookup) {
-        if (!g_title_found && title_eq(title, g_title_want)) {
-            snprintf(g_title_series, sizeof(g_title_series), "%s", series);
-            g_title_index = index_x100;
-            g_title_found = 1;
-        }
-        return;
-    }
-    if (!series_eq(series, want))
-        return;
-    parent_dir(opf_path, dir, sizeof(dir));
-    d = opendir(dir);
-    if (!d)
-        return;
-    while ((ent = readdir(d)) != NULL) {
-        char epub[768];
-        if (ent->d_name[0] == '.')
-            continue;
-        if (!is_book_name(ent->d_name))
-            continue;
-        snprintf(epub, sizeof(epub), "%s/%s", dir, ent->d_name);
-        add_series_cand(epub, title[0] ? title : ent->d_name, author, index_x100);
-        break;
-    }
-    closedir(d);
-}
-
-static void walk_series(const char *dir, int depth, const char *want)
+static void cat_scan_dir(const char *dir, int depth, cat_entry **cat, int *n, int *cap,
+                         const char *skip)
 {
     DIR *d;
     struct dirent *ent;
-    if (!dir || !dir[0] || depth > 8)
-        return;
-    if (g_title_lookup && g_title_found)
+    if (!dir || !dir[0] || depth > 8 || *n >= 8000)
         return;
     d = opendir(dir);
     if (!d)
         return;
-    while ((ent = readdir(d)) != NULL) {
-        char path[768];
-        if (g_title_lookup && g_title_found)
-            break;
-        if (ent->d_name[0] == '.')
-            continue;
-        snprintf(path, sizeof(path), "%s/%s", dir, ent->d_name);
-        if (ends_with_ci(ent->d_name, ".opf")) {
-            consider_opf(path, want);
-            continue;
-        }
-        {
-            struct stat st;
-            if (stat(path, &st) == 0 && S_ISDIR(st.st_mode))
-                walk_series(path, depth + 1, want);
-        }
-    }
-    closedir(d);
-}
-
-static int series_cand_cmp(const void *a, const void *b)
-{
-    const series_cand *ea = (const series_cand *)a;
-    const series_cand *eb = (const series_cand *)b;
-    if (ea->index_x100 != eb->index_x100)
-        return ea->index_x100 < eb->index_x100 ? -1 : 1;
-    return strcmp(ea->title, eb->title);
-}
-
-static void add_ready(const char *path, const char *title, const char *author,
-                      const char *reason)
-{
-    suggest_hit *h;
-    if (!path || !path[0] || g_app.suggest_count >= 5)
-        return;
-    if (already_suggested(path))
-        return;
-    h = &g_app.suggestions[g_app.suggest_count];
-    memset(h, 0, sizeof(*h));
-    snprintf(h->path, sizeof(h->path), "%s", path);
-    if (title && title[0])
-        snprintf(h->title, sizeof(h->title), "%s", title);
-    if (author && author[0])
-        snprintf(h->author, sizeof(h->author), "%s", author);
-    if (reason)
-        snprintf(h->reason, sizeof(h->reason), "%s", reason);
-    g_app.suggest_count++;
-}
-
-static void emit_next_in_series(const char *series, int current_index)
-{
-    int i;
-    int later = 0;
-    if (g_series_n > 1)
-        qsort(g_series, (size_t)g_series_n, sizeof(g_series[0]), series_cand_cmp);
-    for (i = 0; i < g_series_n && g_app.suggest_count < 5; i++) {
-        char reason[128];
-        int n = g_series[i].index_x100 / 100;
-        if (current_index > 0 && g_series[i].index_x100 <= current_index)
-            continue;
-        if (n > 0)
-            snprintf(reason, sizeof(reason), "Next in %s · %d", series, n);
-        else
-            snprintf(reason, sizeof(reason), "Next in %s", series);
-        add_ready(g_series[i].path, g_series[i].title, g_series[i].author, reason);
-        later = 1;
-    }
-    if (!later) {
-        for (i = 0; i < g_series_n && g_app.suggest_count < 5; i++) {
-            char reason[128];
-            int n = g_series[i].index_x100 / 100;
-            if (n > 0)
-                snprintf(reason, sizeof(reason), "%s · %d", series, n);
-            else
-                snprintf(reason, sizeof(reason), "%s", series);
-            add_ready(g_series[i].path, g_series[i].title, g_series[i].author, reason);
-        }
-    }
-    if (g_app.suggest_count == 0) {
-        snprintf(g_app.suggest_status, sizeof(g_app.suggest_status),
-                 "No other books in %s", series);
-    } else if (later) {
-        snprintf(g_app.suggest_status, sizeof(g_app.suggest_status),
-                 "Next in %s", series);
-    } else {
-        snprintf(g_app.suggest_status, sizeof(g_app.suggest_status),
-                 "Other books in %s", series);
-    }
-}
-
-static void suggest_other_shelf(const char *categories, const char *current_shelf)
-{
-    DIR *d;
-    struct dirent *ent;
-    const char *cur_name = strrchr(current_shelf, '/');
-    int passed_current = 0;
-    char picked[512];
-    cur_name = cur_name ? cur_name + 1 : "";
-    picked[0] = '\0';
-    d = opendir(categories);
-    if (!d)
-        return;
-    while ((ent = readdir(d)) != NULL) {
+    while ((ent = readdir(d)) != NULL && *n < 8000) {
         char path[768];
         struct stat st;
         if (ent->d_name[0] == '.')
             continue;
-        snprintf(path, sizeof(path), "%s/%s", categories, ent->d_name);
-        if (stat(path, &st) != 0 || !S_ISDIR(st.st_mode))
+        snprintf(path, sizeof(path), "%s/%s", dir, ent->d_name);
+        if (stat(path, &st) != 0)
             continue;
-        if (!picked[0])
-            snprintf(picked, sizeof(picked), "%s", path);
-        if (passed_current) {
-            snprintf(picked, sizeof(picked), "%s", path);
-            break;
-        }
-        if (strcmp(ent->d_name, cur_name) == 0)
-            passed_current = 1;
+        if (S_ISDIR(st.st_mode))
+            cat_scan_dir(path, depth + 1, cat, n, cap, skip);
+        else if (S_ISREG(st.st_mode) && is_book_name(ent->d_name))
+            cat_add(cat, n, cap, path, skip);
     }
     closedir(d);
-    if (picked[0] && (!current_shelf || strcmp(picked, current_shelf) != 0))
-        collect_books(picked, 0, 3, NULL, "Another shelf on this reader", 5);
+}
+
+static int cat_build(cat_entry **cat, int *n, const char *skip)
+{
+    int cap = 0;
+    const char *sendto;
+    *cat = NULL;
+    *n = 0;
+    cat_scan_dir(CFG_LIBRARY_DIR, 0, cat, n, &cap, skip);
+    cat_scan_dir(CFG_BOOKS_DIR, 0, cat, n, &cap, skip);
+    sendto = config_find_sendto_dir();
+    if (sendto)
+        cat_scan_dir(sendto, 0, cat, n, &cap, skip);
+    return *n;
+}
+
+/* Decode the JSON string that starts at the opening quote. */
+static char *json_unquote(const char *q)
+{
+    char *out;
+    size_t i = 0;
+    size_t cap = 2048;
+    if (!q || *q != '"')
+        return NULL;
+    q++;
+    out = (char *)malloc(cap);
+    if (!out)
+        return NULL;
+    while (*q && *q != '"') {
+        char c = *q++;
+        if (c == '\\' && *q) {
+            char e = *q++;
+            if (e == 'n')
+                c = '\n';
+            else if (e == 't')
+                c = ' ';
+            else if (e == 'u') {
+                c = '?';
+                if (q[0] && q[1] && q[2] && q[3])
+                    q += 4;
+            } else {
+                c = e;
+            }
+        }
+        if (i + 2 >= cap) {
+            char *grown = (char *)realloc(out, cap * 2);
+            if (!grown)
+                break;
+            out = grown;
+            cap *= 2;
+        }
+        out[i++] = c;
+    }
+    out[i] = '\0';
+    return out;
+}
+
+static int part_is_thought(const char *json, const char *at)
+{
+    char win[96];
+    size_t n;
+    const char *from = at;
+    if (at - json > 80)
+        from = at - 80;
+    else
+        from = json;
+    n = (size_t)(at - from);
+    if (n >= sizeof(win))
+        n = sizeof(win) - 1;
+    memcpy(win, from, n);
+    win[n] = '\0';
+    return strstr(win, "\"thought\":true") || strstr(win, "\"thought\": true") ? 1 : 0;
+}
+
+/* Gemini 2.5 often returns an empty thought part before the answer.
+ * Keep the last real text, not the first empty one. */
+static char *gemini_text(const char *json)
+{
+    const char *p;
+    char *best = NULL;
+    if (!json)
+        return NULL;
+    p = json;
+    while ((p = strstr(p, "\"text\"")) != NULL) {
+        const char *q = p + 6;
+        char *piece;
+        int thought = part_is_thought(json, p);
+        while (*q == ' ' || *q == '\t' || *q == '\n' || *q == '\r' || *q == ':')
+            q++;
+        piece = json_unquote(q);
+        p = q + 1;
+        if (!piece)
+            continue;
+        if (!piece[0] || thought) {
+            free(piece);
+            continue;
+        }
+        free(best);
+        best = piece;
+    }
+    return best;
+}
+
+static void json_message(const char *json, char *err, size_t err_n)
+{
+    const char *p;
+    char *msg;
+    if (!err || err_n == 0)
+        return;
+    err[0] = '\0';
+    if (!json)
+        return;
+    p = strstr(json, "\"message\"");
+    if (!p)
+        return;
+    p += 9;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ':')
+        p++;
+    msg = json_unquote(p);
+    if (!msg || !msg[0]) {
+        free(msg);
+        return;
+    }
+    snprintf(err, err_n, "%s", msg);
+    free(msg);
+}
+
+static int ask_gemini(const char *prompt, char **reply, char *err, size_t err_n)
+{
+    char key[128];
+    char url[320];
+    char *escaped;
+    char *payload;
+    CURL *curl;
+    struct curl_slist *headers = NULL;
+    curl_buf buf;
+    CURLcode rc;
+    const char *head = "{\"contents\":[{\"parts\":[{\"text\":\"";
+    /* Close the text, the part, the parts list, and the content item.
+     * The outer object stays open so generationConfig is inside it. */
+    const char *tail =
+        "\"}]}],\"generationConfig\":{\"thinkingConfig\":{\"thinkingBudget\":0}}}";
+    *reply = NULL;
+    if (!load_api_key(key, sizeof(key))) {
+        snprintf(err, err_n, "Add a Gemini key to .ai_api_key");
+        return 0;
+    }
+    if (!ensure_wifi()) {
+        snprintf(err, err_n, "Wi-Fi is not connected");
+        key[0] = '\0';
+        return 0;
+    }
+    escaped = json_escape(prompt);
+    if (!escaped) {
+        snprintf(err, err_n, "Out of memory");
+        key[0] = '\0';
+        return 0;
+    }
+    payload = (char *)malloc(strlen(head) + strlen(escaped) + strlen(tail) + 1);
+    if (!payload) {
+        free(escaped);
+        snprintf(err, err_n, "Out of memory");
+        key[0] = '\0';
+        return 0;
+    }
+    memcpy(payload, head, strlen(head));
+    memcpy(payload + strlen(head), escaped, strlen(escaped));
+    memcpy(payload + strlen(head) + strlen(escaped), tail, strlen(tail) + 1);
+    free(escaped);
+    snprintf(url, sizeof(url), "%s%s", GEMINI_URL_BASE, key);
+    key[0] = '\0';
+    memset(&buf, 0, sizeof(buf));
+    curl = curl_easy_init();
+    if (!curl) {
+        free(payload);
+        snprintf(err, err_n, "Network failed to start");
+        return 0;
+    }
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 90L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    PostponeTimedPoweroff();
+    rc = curl_easy_perform(curl);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    free(payload);
+    if (rc != CURLE_OK) {
+        snprintf(err, err_n, "Network error");
+        free(buf.data);
+        reader_log("gemini curl %s", curl_easy_strerror(rc));
+        return 0;
+    }
+    if (!buf.data) {
+        snprintf(err, err_n, "Empty reply from the AI");
+        return 0;
+    }
+    *reply = gemini_text(buf.data);
+    if (!*reply || !(*reply)[0]) {
+        json_message(buf.data, err, err_n);
+        if (err[0] && (strstr(err, "credit") || strstr(err, "billing") ||
+                       strstr(err, "prepay")))
+            snprintf(err, err_n, "The Gemini account has no credits left");
+        if (!err[0])
+            snprintf(err, err_n, "The AI reply could not be read");
+        reader_log("gemini body %.180s", buf.data);
+        free(*reply);
+        *reply = NULL;
+        free(buf.data);
+        return 0;
+    }
+    free(buf.data);
+    return 1;
+}
+
+static int line_index(const char *s, const char **rest)
+{
+    int n = 0;
+    if (!s)
+        return 0;
+    while (*s == ' ' || *s == '\t' || *s == '*' || *s == '-' || *s == '#')
+        s++;
+    if (*s < '0' || *s > '9')
+        return 0;
+    while (*s >= '0' && *s <= '9') {
+        n = n * 10 + (*s - '0');
+        if (n > 100000)
+            return 0;
+        s++;
+    }
+    if (*s == '.' || *s == ')' || *s == ':' || *s == '|' || *s == '-')
+        s++;
+    while (*s == ' ' || *s == '\t')
+        s++;
+    if (rest)
+        *rest = s;
+    return n;
+}
+
+static void apply_reply(const char *reply, cat_entry *cat, int count)
+{
+    const char *p = reply;
+    while (p && *p && g_app.suggest_count < 5) {
+        const char *eol = strchr(p, '\n');
+        char line[256];
+        const char *rest = NULL;
+        int idx;
+        size_t n = eol ? (size_t)(eol - p) : strlen(p);
+        if (n >= sizeof(line))
+            n = sizeof(line) - 1;
+        memcpy(line, p, n);
+        line[n] = '\0';
+        idx = line_index(line, &rest);
+        if (idx >= 1 && idx <= count) {
+            const char *reason = (rest && rest[0]) ? rest : "Chosen from your books";
+            add_suggestion(cat[idx - 1].path, reason);
+        }
+        if (!eol)
+            break;
+        p = eol + 1;
+    }
+}
+
+static const char *ask_for_mode(int mode)
+{
+    if (mode == 0)
+        return "Continue the series. Pick the next books in that series.";
+    if (mode == 1)
+        return "Suggest books with a similar theme or the same kind of story.";
+    return "Suggest something different from the current book.";
 }
 
 void suggest_run(int mode)
 {
     const char *path = current_book_path();
-    char categories[512];
-    char shelf[512];
-    char author[512];
-    int on_shelf = 0;
+    cat_entry *cat = NULL;
+    int count = 0;
+    char cur_title[160];
+    char cur_author[80];
+    char *list = NULL;
+    char *prompt = NULL;
+    char *reply = NULL;
+    char err[128];
+    size_t list_n = 0;
+    size_t list_cap = 0;
+    int i;
 
     g_app.suggest_count = 0;
-    categories[0] = shelf[0] = author[0] = '\0';
+    err[0] = '\0';
+    cur_title[0] = cur_author[0] = '\0';
+    paint_wait("Reading file names");
     if (path)
-        on_shelf = split_library_path(path, categories, sizeof(categories),
-                                      shelf, sizeof(shelf),
-                                      author, sizeof(author));
+        book_names_from_path(path, cur_title, sizeof(cur_title),
+                             cur_author, sizeof(cur_author), NULL, 0, NULL);
+    cat_build(&cat, &count, path);
+    reader_log("suggest catalog %d books", count);
+    if (count == 0) {
+        snprintf(g_app.suggest_status, sizeof(g_app.suggest_status),
+                 "No books found on this reader");
+        free(cat);
+        g_app.screen = SCREEN_SUGGEST_RESULTS;
+        ui_draw();
+        return;
+    }
 
-    ClearScreen();
-    if (g_app.font_msg)
-        SetFont(g_app.font_msg, g_app.cfg.night ? WHITE : BLACK);
-    DrawTextRect(0, ScreenHeight() / 2 - 20, ScreenWidth(), 40,
-                 "Looking through your books", ALIGN_CENTER | VALIGN_MIDDLE);
-    PartialUpdate(0, ScreenHeight() / 2 - 20, ScreenWidth(), 40);
-
-    if (mode == 0) {
-        char series[160];
-        int series_index = 0;
-        /* Same-folder matching listed unrelated Send-to books. Follow the
-         * series name (Calibre metadata) and offer the later volumes. */
-        g_opf_seen = 0;
-        g_title_lookup = 0;
-        g_title_found = 0;
-        if (path && read_book_series(path, series, sizeof(series), &series_index)) {
-            g_series_n = 0;
-            walk_series(CFG_LIBRARY_DIR, 0, series);
-            reader_log("series [%s] index %d matches %d (opf %d)",
-                       series, series_index, g_series_n, g_opf_seen);
-            emit_next_in_series(series, series_index);
-        } else if (path) {
-            bookinfo *info = GetBookInfo(path);
-            if (info && info->title && info->title[0]) {
-                g_title_lookup = 1;
-                snprintf(g_title_want, sizeof(g_title_want), "%s", info->title);
-                walk_series(CFG_LIBRARY_DIR, 0, "");
-                g_title_lookup = 0;
-            }
-            if (g_title_found && g_title_series[0]) {
-                snprintf(series, sizeof(series), "%s", g_title_series);
-                series_index = g_title_index;
-                g_series_n = 0;
-                g_opf_seen = 0;
-                walk_series(CFG_LIBRARY_DIR, 0, series);
-                reader_log("series by title [%s] index %d matches %d",
-                           series, series_index, g_series_n);
-                emit_next_in_series(series, series_index);
-            } else if (on_shelf) {
-                collect_books(author, 0, 2, NULL, "Same author on this reader", 5);
-                snprintf(g_app.suggest_status, sizeof(g_app.suggest_status), "%s",
-                         g_app.suggest_count ? "Same author, on this reader"
-                                             : "No other books by this author");
-            } else {
-                reader_log("series: none for %s", path);
-                snprintf(g_app.suggest_status, sizeof(g_app.suggest_status),
-                         "No series information for this book");
-            }
-        } else if (on_shelf) {
-            collect_books(author, 0, 2, NULL, "Same author on this reader", 5);
-            snprintf(g_app.suggest_status, sizeof(g_app.suggest_status), "%s",
-                     g_app.suggest_count ? "Same author, on this reader"
-                                         : "No other books by this author");
-        } else {
-            snprintf(g_app.suggest_status, sizeof(g_app.suggest_status),
-                     "No series information for this book");
-        }
-    } else if (mode == 1) {
-        if (on_shelf) {
-            const char *author_name = strrchr(author, '/');
-            author_name = author_name ? author_name + 1 : "";
-            collect_books(shelf, 0, 3, author_name, "Same shelf on this reader", 5);
-        }
-        snprintf(g_app.suggest_status, sizeof(g_app.suggest_status), "%s",
-                 g_app.suggest_count ? "Same shelf, on this reader"
-                                     : "No other books on this shelf");
-    } else {
-        if (on_shelf)
-            suggest_other_shelf(categories, shelf);
+    list_cap = 1024;
+    list = (char *)malloc(list_cap);
+    if (!list) {
+        snprintf(g_app.suggest_status, sizeof(g_app.suggest_status), "Out of memory");
+        free(cat);
+        g_app.screen = SCREEN_SUGGEST_RESULTS;
+        ui_draw();
+        return;
+    }
+    list[0] = '\0';
+    for (i = 0; i < count; i++) {
+        char row[360];
+        int wrote;
+        if (cat[i].author[0])
+            wrote = snprintf(row, sizeof(row), "%d. %s — %s\n", i + 1,
+                             cat[i].title, cat[i].author);
         else
-            collect_books(CFG_LIBRARY_DIR "/_Categories", 0, 4, NULL,
-                          "On this reader", 5);
-        snprintf(g_app.suggest_status, sizeof(g_app.suggest_status), "%s",
-                 g_app.suggest_count ? "Another shelf, on this reader"
-                                     : "No other shelves found");
+            wrote = snprintf(row, sizeof(row), "%d. %s\n", i + 1, cat[i].title);
+        if (wrote < 0)
+            continue;
+        if (list_n + (size_t)wrote + 1 > list_cap) {
+            size_t next = list_cap * 2 + (size_t)wrote;
+            char *grown = (char *)realloc(list, next);
+            if (!grown)
+                break;
+            list = grown;
+            list_cap = next;
+        }
+        memcpy(list + list_n, row, (size_t)wrote + 1);
+        list_n += (size_t)wrote;
     }
 
-    if (!path && g_app.suggest_count == 0) {
-        collect_books(CFG_LIBRARY_DIR, 0, 4, NULL, "On this reader", 5);
-        if (g_app.suggest_count == 0)
-            collect_books(CFG_SENDTO_DIR2, 0, 1, NULL, "Send to PocketBook", 5);
-        snprintf(g_app.suggest_status, sizeof(g_app.suggest_status), "%s",
-                 g_app.suggest_count ? "Books on this reader"
-                                     : "No books found on this reader");
+    {
+        const char *head =
+            "You recommend books that are already on this e-reader. "
+            "Choose only from the numbered list. Do not invent titles.\n\n"
+            "Request: ";
+        const char *mid = "\nCurrent book: ";
+        const char *tail =
+            "\n\nBooks on this reader:\n";
+        const char *end =
+            "\nReply with at most 5 lines. Each line starts with the list number, "
+            "then a vertical bar, then a short reason.\n"
+            "Example: 4 | Next in the series\n"
+            "If none fit, reply NONE.\n";
+        size_t need = strlen(head) + strlen(ask_for_mode(mode)) + strlen(mid) +
+                      strlen(cur_title) + strlen(cur_author) + 8 + strlen(tail) +
+                      list_n + strlen(end) + 8;
+        prompt = (char *)malloc(need);
+        if (prompt) {
+            snprintf(prompt, need,
+                     "%s%s%s%s%s%s%s%s%s",
+                     head, ask_for_mode(mode), mid,
+                     cur_title[0] ? cur_title : "(none open)",
+                     cur_author[0] ? " — " : "",
+                     cur_author,
+                     tail, list, end);
+        }
+    }
+    free(list);
+    if (!prompt) {
+        snprintf(g_app.suggest_status, sizeof(g_app.suggest_status), "Out of memory");
+        free(cat);
+        g_app.screen = SCREEN_SUGGEST_RESULTS;
+        ui_draw();
+        return;
     }
 
+    paint_wait("Asking");
+    if (!ask_gemini(prompt, &reply, err, sizeof(err))) {
+        snprintf(g_app.suggest_status, sizeof(g_app.suggest_status), "%s",
+                 err[0] ? err : "The AI request failed");
+        free(prompt);
+        free(reply);
+        free(cat);
+        g_app.screen = SCREEN_SUGGEST_RESULTS;
+        ui_draw();
+        return;
+    }
+    free(prompt);
+    apply_reply(reply, cat, count);
+    reader_log("suggest ai hits %d", g_app.suggest_count);
+    free(reply);
+    free(cat);
+    if (g_app.suggest_count == 0) {
+        snprintf(g_app.suggest_status, sizeof(g_app.suggest_status),
+                 "No matching book on this reader");
+    } else if (mode == 0) {
+        snprintf(g_app.suggest_status, sizeof(g_app.suggest_status),
+                 "Next books from your library");
+    } else if (mode == 1) {
+        snprintf(g_app.suggest_status, sizeof(g_app.suggest_status),
+                 "Similar books on this reader");
+    } else {
+        snprintf(g_app.suggest_status, sizeof(g_app.suggest_status),
+                 "Different books on this reader");
+    }
     g_app.screen = SCREEN_SUGGEST_RESULTS;
     ui_draw();
 }

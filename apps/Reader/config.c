@@ -44,6 +44,15 @@ static void apply_kv(reader_config *cfg, const char *key, const char *val)
         snprintf(cfg->last_book, sizeof(cfg->last_book), "%s", val);
         return;
     }
+    if (strncmp(key, "recent.", 7) == 0 && val[0]) {
+        int i = 0;
+        if (sscanf(key + 7, "%d", &i) == 1 && i >= 0 && i < CFG_RECENT_MAX) {
+            snprintf(cfg->recent[i], sizeof(cfg->recent[i]), "%s", val);
+            if (i + 1 > cfg->recent_count)
+                cfg->recent_count = i + 1;
+        }
+        return;
+    }
     if (sscanf(val, "%d", &n) != 1)
         return;
     if (strcmp(key, "font_size") == 0)
@@ -101,7 +110,31 @@ int config_load(reader_config *cfg)
         apply_kv(cfg, key, val);
     }
     fclose(fp);
+    if (cfg->recent_count == 0 && cfg->last_book[0]) {
+        snprintf(cfg->recent[0], sizeof(cfg->recent[0]), "%s", cfg->last_book);
+        cfg->recent_count = 1;
+    }
     return 1;
+}
+
+void config_remember_book(reader_config *cfg, const char *path)
+{
+    char tmp[CFG_RECENT_MAX][512];
+    int n = 0;
+    int i;
+    if (!cfg || !path || !path[0])
+        return;
+    snprintf(tmp[n], sizeof(tmp[n]), "%s", path);
+    n++;
+    for (i = 0; i < cfg->recent_count && n < CFG_RECENT_MAX; i++) {
+        if (!cfg->recent[i][0] || strcmp(cfg->recent[i], path) == 0)
+            continue;
+        snprintf(tmp[n], sizeof(tmp[n]), "%s", cfg->recent[i]);
+        n++;
+    }
+    memset(cfg->recent, 0, sizeof(cfg->recent));
+    memcpy(cfg->recent, tmp, sizeof(tmp[0]) * (size_t)n);
+    cfg->recent_count = n;
 }
 
 static int ensure_parent_dirs(void)
@@ -120,6 +153,7 @@ int config_save(const reader_config *cfg)
     char tmp[sizeof(CFG_PATH) + 8];
     char line[ENGINE_POS_MAX + 512];
     int ok;
+    int n;
 
     ensure_parent_dirs();
     snprintf(tmp, sizeof(tmp), "%s.tmp", CFG_PATH);
@@ -131,6 +165,10 @@ int config_save(const reader_config *cfg)
     fprintf(out, "font_face=%s\n", cfg->font_face);
     if (cfg->last_book[0])
         fprintf(out, "last_book=%s\n", cfg->last_book);
+    for (n = 0; n < cfg->recent_count && n < CFG_RECENT_MAX; n++) {
+        if (cfg->recent[n][0])
+            fprintf(out, "recent.%d=%s\n", n, cfg->recent[n]);
+    }
     fprintf(out, "font_size=%d\n", cfg->font_size);
     fprintf(out, "margin=%d\n", cfg->margin);
     fprintf(out, "line_spacing=%d\n", cfg->line_spacing);

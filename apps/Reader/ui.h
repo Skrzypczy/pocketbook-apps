@@ -19,7 +19,8 @@ typedef enum {
 
 typedef enum {
     BROWSE_SENDTO = 0,
-    BROWSE_LIBRARY = 1
+    BROWSE_LIBRARY = 1,
+    BROWSE_RECENT = 2
 } browse_root;
 
 typedef struct book_entry {
@@ -93,6 +94,13 @@ void library_draw(void);
 int library_hit(int x, int y);
 void home_draw(void);
 int home_hit(int x, int y);
+/* Title, author, and series come from the file name (or the library
+ * folder names when the file itself is a hash). Any out pointer may be NULL. */
+void book_names_from_path(const char *path,
+                          char *title, size_t title_n,
+                          char *author, size_t author_n,
+                          char *series, size_t series_n,
+                          int *index);
 
 void settings_draw(void);
 int settings_hit(int x, int y);

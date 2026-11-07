@@ -39,6 +39,7 @@
 #define CFG_WARMTH_MAX      100
 
 #define CFG_BOOKS_MAX       8000
+#define CFG_RECENT_MAX      10
 /* Prefer ui_bar_h() from layout.h at runtime; keep a fallback constant. */
 #define CFG_BAR_HEIGHT      64
 
@@ -55,11 +56,14 @@ typedef struct reader_config {
     int warmth;         /* -1 = unread from device */
     int warmth_valid;
     char last_book[512];
+    char recent[CFG_RECENT_MAX][512];
+    int recent_count;
 } reader_config;
 
 void config_set_defaults(reader_config *cfg);
 int config_load(reader_config *cfg);
 int config_save(const reader_config *cfg);
+void config_remember_book(reader_config *cfg, const char *path);
 int config_get_position(const char *path, char *buf, size_t buflen);
 int config_set_position(const char *path, const char *pos);
 const char *config_find_sendto_dir(void);

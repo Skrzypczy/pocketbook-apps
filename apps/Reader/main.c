@@ -367,6 +367,19 @@ void ui_show_browse(browse_root root)
         DrawTextRect(0, sh / 2 - 20, sw, 40, "Scanning library",
                      ALIGN_CENTER | VALIGN_MIDDLE);
         refresh_full();
+    } else if (root == BROWSE_RECENT) {
+        int sw = ScreenWidth();
+        int sh = ScreenHeight();
+        int fg = g_app.cfg.night ? WHITE : BLACK;
+        int bg = g_app.cfg.night ? BLACK : WHITE;
+        ui_apply_fonts();
+        ClearScreen();
+        FillArea(0, 0, sw, sh, bg);
+        if (g_app.font_msg)
+            SetFont(g_app.font_msg, fg);
+        DrawTextRect(0, sh / 2 - 20, sw, 40, "Reading titles",
+                     ALIGN_CENTER | VALIGN_MIDDLE);
+        refresh_partial(0, sh / 2 - 20, sw, 40);
     }
     library_scan(root);
     g_app.screen = SCREEN_BROWSE;
@@ -469,6 +482,7 @@ void ui_open_book(const char *path)
     snprintf(g_app.open_path, sizeof(g_app.open_path), "%s", path);
     snprintf(g_app.last_book, sizeof(g_app.last_book), "%s", path);
     snprintf(g_app.cfg.last_book, sizeof(g_app.cfg.last_book), "%s", path);
+    config_remember_book(&g_app.cfg, path);
     config_save(&g_app.cfg);
 
     ui_apply_fonts();
