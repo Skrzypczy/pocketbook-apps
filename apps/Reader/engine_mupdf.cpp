@@ -214,6 +214,88 @@ static int pdf_page_text(char *buf, size_t buflen)
 static int pdf_is_reflowable(void) { return 0; }
 static const char *pdf_name(void) { return "mupdf"; }
 
+static int pdf_find(const char *query, int reverse)
+{
+    int start;
+    int i;
+    if (!g_ctx || !g_doc || !query || !query[0] || g_pages <= 0)
+        return -1;
+    start = reverse ? g_page - 1 : g_page + 1;
+    if (reverse) {
+        for (i = start; i >= 0; i--) {
+            fz_stext_page *text = NULL;
+            fz_quad hits[8];
+            int n = 0;
+            fz_try(g_ctx) {
+                text = fz_new_stext_page_from_page_number(g_ctx, g_doc, i, NULL);
+                n = fz_search_stext_page(g_ctx, text, query, NULL, hits, 8);
+            }
+            fz_always(g_ctx) {
+                if (text) fz_drop_stext_page(g_ctx, text);
+            }
+            fz_catch(g_ctx) {
+                continue;
+            }
+            if (n > 0) {
+                g_page = i;
+                return 0;
+            }
+        }
+    } else {
+        for (i = start; i < g_pages; i++) {
+            fz_stext_page *text = NULL;
+            fz_quad hits[8];
+            int n = 0;
+            fz_try(g_ctx) {
+                text = fz_new_stext_page_from_page_number(g_ctx, g_doc, i, NULL);
+                n = fz_search_stext_page(g_ctx, text, query, NULL, hits, 8);
+            }
+            fz_always(g_ctx) {
+                if (text) fz_drop_stext_page(g_ctx, text);
+            }
+            fz_catch(g_ctx) {
+                continue;
+            }
+            if (n > 0) {
+                g_page = i;
+                return 0;
+            }
+        }
+    }
+    return -1;
+}
+
+static int pdf_chapter_title(char *buf, size_t buflen)
+{
+    fz_outline *o;
+    const char *best = NULL;
+    int best_page = -1;
+    if (!buf || buflen == 0)
+        return -1;
+    buf[0] = '\0';
+    for (o = g_outline; o; o = o->next) {
+        int p = o->page.page;
+        if (p >= 0 && p <= g_page && p >= best_page) {
+            best_page = p;
+            best = o->title;
+        }
+        if (o->down) {
+            fz_outline *d;
+            for (d = o->down; d; d = d->next) {
+                int p2 = d->page.page;
+                if (p2 >= 0 && p2 <= g_page && p2 >= best_page) {
+                    best_page = p2;
+                    best = d->title;
+                }
+            }
+        }
+    }
+    if (!best)
+        return -1;
+    snprintf(buf, buflen, "%s", best);
+    return 0;
+}
+
 extern const reader_engine engine_mupdf = {
     pdf_open,
     pdf_close,
@@ -225,9 +307,12 @@ extern const reader_engine engine_mupdf = {
     pdf_prev,
     pdf_draw,
     pdf_page_text,
+    NULL, /* page_text_at */
     pdf_get_position,
     pdf_set_position,
     pdf_contents,
     pdf_is_reflowable,
-    pdf_name
+    pdf_name,
+    pdf_find,
+    pdf_chapter_title
 };

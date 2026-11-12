@@ -85,7 +85,7 @@ static void row_label(settings_row r, char *buf, size_t n)
         snprintf(buf, n, "Line spacing: %d%%", g_app.cfg.line_spacing);
         break;
     case ROW_PUBLISHER:
-        snprintf(buf, n, "Publisher layout: %s",
+        snprintf(buf, n, "Book styles: %s",
                  g_app.cfg.publisher_styles ? "On" : "Off");
         break;
     case ROW_GOTO:
@@ -196,29 +196,6 @@ static void settings_find_keyboard(char *text)
     }
     g_app.screen = SCREEN_SETTINGS;
     ui_draw();
-}
-
-static void cycle_font_face(void)
-{
-    char faces[32][64];
-    int n = engine_list_faces(faces, 32);
-    int i;
-    int cur = -1;
-    if (n <= 0) {
-        if (strcmp(g_app.cfg.font_face, "Bookerly") == 0)
-            snprintf(g_app.cfg.font_face, sizeof(g_app.cfg.font_face), "Liberation Sans");
-        else
-            snprintf(g_app.cfg.font_face, sizeof(g_app.cfg.font_face), "Bookerly");
-        return;
-    }
-    for (i = 0; i < n; i++) {
-        if (strcmp(g_app.cfg.font_face, faces[i]) == 0) {
-            cur = i;
-            break;
-        }
-    }
-    cur = (cur + 1) % n;
-    snprintf(g_app.cfg.font_face, sizeof(g_app.cfg.font_face), "%s", faces[cur]);
 }
 
 static int adjust_row(settings_row r, int dir)
@@ -401,8 +378,7 @@ int settings_hit(int x, int y)
                 return 1;
             }
             if (r == ROW_FONT_FACE) {
-                cycle_font_face();
-                ui_draw();
+                fonts_open();
                 return 1;
             }
             if (r == ROW_PUBLISHER) {

@@ -22,7 +22,7 @@ Page body: left third = previous page, right two-thirds = next. Hardware NEXT/PR
 
 ### Settings
 
-Font face/size, margins, line spacing, publisher layout, go to page, contents, brightness, warmth, full-refresh interval, day/night, and which app opens books from the PocketBook library (`extensions.cfg`). On PDF, reflow-only rows are hidden. Font faces come from registered device TTFs.
+Font opens a scrollable list of registered faces; also font size, margins, line spacing, book styles (publisher CSS), go to page, contents, brightness, warmth, full-refresh interval, day/night, and which app opens books from the PocketBook library (`extensions.cfg`). On PDF, reflow-only rows are hidden. Font faces come from registered device TTFs.
 
 ### Formats
 

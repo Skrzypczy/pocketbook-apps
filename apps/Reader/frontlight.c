@@ -23,12 +23,20 @@ int frontlight_available(void)
 int frontlight_is_on(void)
 {
     int st;
+    int en;
+
     if (!frontlight_available())
         return 0;
-    /* Prefer state sign — avoids relying on Enabled quirks during early boot. */
     st = GetFrontlightState();
     if (st == INT_MIN)
         return 0;
+    /* Firmware 5.19+: Enabled=0 means off even when state still holds a level. */
+    en = GetFrontlightEnabled();
+    if (en == 0)
+        return 0;
+    if (en > 0)
+        return st >= 0;
+    /* Enabled unavailable — fall back to state sign. */
     return st >= 0;
 }
 

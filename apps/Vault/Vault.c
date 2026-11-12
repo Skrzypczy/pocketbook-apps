@@ -8,6 +8,8 @@
 #include <errno.h>
 #include <time.h>
 
+#include "frontlight_peek.h"
+
 // --- CONFIGURATION ---
 #define TARGET_FOLDER_VISIBLE "/mnt/ext1/Private"
 #define TARGET_FOLDER_HIDDEN  "/mnt/ext1/.Private"
@@ -825,8 +827,12 @@ static int Handler(int type, int par1, int par2) {
             break;
             
         case EVT_SHOW:
+            frontlight_peek_on_show();
             Draw();
             PartialUpdate(0, 0, ScreenWidth(), ScreenHeight());
+            break;
+        case EVT_FOREGROUND:
+            frontlight_peek_on_show();
             break;
             
         case EVT_POINTERUP: {

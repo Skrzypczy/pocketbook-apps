@@ -35,17 +35,25 @@ static void test_bar_hits(void)
 {
     bar_layout b;
     bar_compute(&b, 1264, 1680, 64);
-    assert(bar_hit_test(&b, 10, 10) == BAR_HIT_NONE);
-    assert(bar_hit_test(&b, 400, 10) == BAR_HIT_DAYNIGHT);
-    assert(bar_hit_test(&b, 700, 10) == BAR_HIT_LIGHT);
-    assert(bar_hit_test(&b, 800, 10) == BAR_HIT_BOOKS);
-    assert(bar_hit_test(&b, 1100, 10) == BAR_HIT_PAGES);
+    /* Six equal columns: time | pages | options | night | light | sleep */
+    assert(b.clock_w == b.pages_w && b.pages_w == b.options_w);
+    assert(b.options_w == b.day_w && b.day_w == b.light_w);
+    assert(b.clock_x < b.pages_x && b.pages_x < b.options_x);
+    assert(b.options_x < b.day_x && b.day_x < b.light_x && b.light_x < b.sleep_x);
+    assert(bar_hit_test(&b, 10, 10) == BAR_HIT_NONE); /* clock */
+    assert(bar_hit_test(&b, b.pages_x + 5, 10) == BAR_HIT_PAGES);
+    assert(bar_hit_test(&b, b.options_x + 5, 10) == BAR_HIT_OPTIONS);
+    assert(bar_hit_test(&b, b.day_x + 10, 10) == BAR_HIT_DAYNIGHT);
+    assert(bar_hit_test(&b, b.light_x + 10, 10) == BAR_HIT_LIGHT);
+    assert(bar_hit_test(&b, b.sleep_x + 10, 10) == BAR_HIT_SLEEP);
+    assert(b.sleep_x + b.sleep_w == 1264);
     assert(bar_hit_test(&b, 100, 100) == BAR_HIT_NONE);
     assert(bar_hit_test(&b, -1, 10) == BAR_HIT_NONE);
 
     bar_compute(&b, 1680, 1264, 64);
-    assert(bar_hit_test(&b, 500, 10) == BAR_HIT_DAYNIGHT);
-    assert(b.pages_x + b.pages_w == 1680);
+    assert(b.clock_x < b.pages_x && b.pages_x < b.options_x && b.options_x < b.day_x && b.day_x < b.sleep_x);
+    assert(b.sleep_x + b.sleep_w == 1680);
+    assert(bar_hit_test(&b, b.sleep_x + 10, 10) == BAR_HIT_SLEEP);
     printf("bar hits OK\n");
 }
 

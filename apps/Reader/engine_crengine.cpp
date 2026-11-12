@@ -306,13 +306,20 @@ static int cre_set_layout(const engine_layout *layout)
         g_view->setDefaultFontFace(u8(layout->font_face));
 
     int m = layout->margin;
-    g_view->setPageMargins(lvRect(m, m, m, m));
+    if (m < 16)
+        m = 16;
 
     CRPropRef props = g_view->propsGetCurrent();
     apply_header_off(props);
     props->setInt(PROP_INTERLINE_SPACE, layout->line_spacing);
     props->setInt(PROP_EMBEDDED_STYLES, layout->publisher_styles ? 1 : 0);
     props->setInt(PROP_EMBEDDED_FONTS, layout->publisher_styles ? 1 : 0);
+    /* propsApply re-applies PROP_PAGE_MARGIN_* and would wipe setPageMargins
+     * if these stay at the crengine defaults (~8). Keep them in sync. */
+    props->setInt(PROP_PAGE_MARGIN_LEFT, m);
+    props->setInt(PROP_PAGE_MARGIN_RIGHT, m);
+    props->setInt(PROP_PAGE_MARGIN_TOP, m);
+    props->setInt(PROP_PAGE_MARGIN_BOTTOM, m);
     if (layout->night) {
         props->setColor(PROP_FONT_COLOR, 0xFFFFFF);
         props->setColor(PROP_BACKGROUND_COLOR, 0x000000);
@@ -321,6 +328,7 @@ static int cre_set_layout(const engine_layout *layout)
         props->setColor(PROP_BACKGROUND_COLOR, 0xFFFFFF);
     }
     g_view->propsApply(props);
+    g_view->setPageMargins(lvRect(m, m, m, m));
     /* Do not setStyleSheet here — restyle of an open book is too slow on-device. */
     g_view->Resize(g_width, g_height);
     g_view->Render();
@@ -505,7 +513,13 @@ static int cre_draw(unsigned char *gray, int width, int height, int stride)
     }
 
     {
-        int wrap = (probe >= 6) ? 1 : 0;
+        /*
+         * Wrap (LVGrayDrawBuf over page_buf) crashes hard on PB Era / FW 6.10
+         * inside Draw — boot log stops at "Draw wrap begin", draw_inflight
+         * left behind. Probe 6 therefore uses the same scratch+copy path as
+         * probe 3/4. Keep wrap=1 only via cre_draw_into for experiments.
+         */
+        int wrap = 0;
         int copy_out = (probe >= 3) ? 1 : 0;
         int rc;
 
@@ -528,8 +542,9 @@ static int cre_draw(unsigned char *gray, int width, int height, int stride)
         }
 
         rc = cre_draw_into(gray, width, height, stride, wrap);
-        /* Keep the page we drew so the on-screen bitmap matches current_page(). */
-        (void)saved_page;
+        /* Probe 2–4 jumped to a mid-book page to avoid the cover; restore. */
+        if (probe >= 2 && probe <= 4)
+            g_view->goToPage(saved_page);
         if (probe == 5 && rc != 0)
             g_view->setShowCover(false);
         return rc;

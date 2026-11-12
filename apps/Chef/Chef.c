@@ -5,9 +5,11 @@
 #include <time.h>
 #include <curl/curl.h>
 
+#include "frontlight_peek.h"
+
 // --- CONFIGURATION ---
 #define GEMINI_API_KEY_FILE "/mnt/ext1/.ai_api_key"
-#define GEMINI_URL_BASE "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key="
+#define GEMINI_URL_BASE "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key="
 #define PROFILE_FILE "/mnt/ext1/.chef_profile.json"
 #define COOKBOOK_FILE "/mnt/ext1/.chef_cookbook.json"
 #define MAX_INGREDIENTS_LEN 256
@@ -1175,7 +1177,11 @@ static int Handler(int type, int par1, int par2) {
             break;
             
         case EVT_SHOW:
+            frontlight_peek_on_show();
             DrawUI();
+            break;
+        case EVT_FOREGROUND:
+            frontlight_peek_on_show();
             break;
             
         case EVT_POINTERUP: {

@@ -31,9 +31,11 @@ add_executable(Reader.app
   debug.c
   refresh.c
   frontlight.c
+  ${REPO_ROOT}/apps/common/frontlight_peek.c
   library.c
   settings.c
   contents.c
+  fonts.c
   suggest.c
   extensions.c
   engine_select.c
@@ -43,6 +45,7 @@ add_executable(Reader.app
 
 target_include_directories(Reader.app PRIVATE
   ${READER_DIR}
+  ${REPO_ROOT}/apps/common
   ${PB_SYSROOT}/usr/include
   ${PB_SYSROOT}/usr/include/freetype2
   ${REPO_ROOT}/docs/sdk

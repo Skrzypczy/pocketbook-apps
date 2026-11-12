@@ -16,7 +16,7 @@ $CC -o /src/build/NaSkillaStub.app $OUT/naskilla_stub.o -linkview
 ls -la /src/build/NaSkillaStub.app
 $TRIPLE-readelf -d /src/build/NaSkillaStub.app | grep NEEDED || true
 
-INC="-I/src/apps/Reader -I/src/docs/sdk -I$SYSROOT/usr/include -I$SYSROOT/usr/include/freetype2 -I/src/third_party/mupdf/include -I/src/third_party/crengine/crengine/include -I/src/third_party/crengine_pb"
+INC="-I/src/apps/Reader -I/src/apps/common -I/src/docs/sdk -I$SYSROOT/usr/include -I$SYSROOT/usr/include/freetype2 -I/src/third_party/mupdf/include -I/src/third_party/crengine/crengine/include -I/src/third_party/crengine_pb"
 CFLAGS="-Wall -Wextra -O2 -g -fPIC -ffunction-sections -fdata-sections"
 CXXFLAGS="$CFLAGS -std=gnu++17 -include /src/third_party/crengine_pb/crsetup.h"
 GIT_SHA=${NASKILLA_GIT_SHA:-$(git -C /src rev-parse --short HEAD 2>/dev/null || echo unknown)}
@@ -35,9 +35,11 @@ $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/config.c -o $OUT/config.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/debug.c -o $OUT/debug.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/refresh.c -o $OUT/refresh.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/frontlight.c -o $OUT/frontlight.o
+$CC $CFLAGS $DEFS $INC -c /src/apps/common/frontlight_peek.c -o $OUT/frontlight_peek.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/library.c -o $OUT/library.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/settings.c -o $OUT/settings.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/contents.c -o $OUT/contents.o
+$CC $CFLAGS $DEFS $INC -c /src/apps/Reader/fonts.c -o $OUT/fonts.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/suggest.c -o $OUT/suggest.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/extensions.c -o $OUT/extensions.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/engine_select.c -o $OUT/engine_select.o
@@ -48,8 +50,8 @@ echo "=== Linking NaSkilla.app (static png/jpeg/freetype/z) ==="
 # Static-link libs that may be missing or version-mismatched on device firmware.
 # Keep curl+inkview dynamic (same as Chef.app which already runs on this device).
 $CXX -o /src/build/NaSkilla.debug \
-  $OUT/main.o $OUT/bar.o $OUT/config.o $OUT/debug.o $OUT/refresh.o $OUT/frontlight.o \
-  $OUT/library.o $OUT/settings.o $OUT/contents.o $OUT/suggest.o $OUT/extensions.o \
+  $OUT/main.o $OUT/bar.o $OUT/config.o $OUT/debug.o $OUT/refresh.o $OUT/frontlight.o $OUT/frontlight_peek.o \
+  $OUT/library.o $OUT/settings.o $OUT/contents.o $OUT/fonts.o $OUT/suggest.o $OUT/extensions.o \
   $OUT/engine_select.o $OUT/engine_crengine.o $OUT/engine_mupdf.o \
   -Wl,--start-group \
   $OUT/crengine/libcrengine.a $OUT/crengine/chmlib/libchmlib.a $OUT/crengine/antiword/libantiword.a \

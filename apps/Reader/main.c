@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "ui.h"
 #include "frontlight.h"
+#include "frontlight_peek.h"
 #include "refresh.h"
 #include "layout.h"
 #include "debug.h"
@@ -414,6 +415,10 @@ void ui_draw(void)
         contents_draw();
         refresh_full();
         break;
+    case SCREEN_FONTS:
+        fonts_draw();
+        refresh_full();
+        break;
     case SCREEN_MESSAGE:
         draw_message();
         refresh_full();
@@ -682,27 +687,58 @@ static void toggle_night(void)
     draw_reading(1);
 }
 
+static void refresh_light_button(void)
+{
+    int fg = g_app.cfg.night ? WHITE : BLACK;
+    int bg = g_app.cfg.night ? BLACK : WHITE;
+    const reader_engine *eng = engine_active();
+
+    if (g_app.screen != SCREEN_READING || !g_app.light_available)
+        return;
+    SetFont(g_app.font_bar, fg);
+    update_bar_label();
+    bar_draw(&g_app.bar, g_app.clock, g_app.cfg.night, g_app.light_on,
+             g_app.light_available,
+             eng ? eng->current_page() : 0,
+             eng ? eng->page_count() : 0, fg, bg,
+             g_app.bar_pages_label);
+    refresh_partial(g_app.bar.light_x, 0, g_app.bar.light_w, g_app.bar.height);
+}
+
+/* Sleep/keylock can turn the lamp off while our UI flag stays on. */
+static void sync_light_ui_from_device(void)
+{
+    int on;
+
+    if (!g_app.light_available || frontlight_peek_active())
+        return;
+    on = frontlight_is_on() ? 1 : 0;
+    if (on == g_app.light_on)
+        return;
+    g_app.light_on = on;
+    g_app.cfg.light_on = on;
+    refresh_light_button();
+}
+
+/* Peek must not change committed intent; redraw label from g_app.light_on after restore. */
+static void on_frontlight_peek_end(void)
+{
+    refresh_light_button();
+}
+
 static void toggle_light(void)
 {
     if (!g_app.light_available || refresh_busy())
         return;
+    /* Cancel first so the peek timer cannot turn the lamp off after this tap.
+     * UI flag was synced from the real off state before the peek, so the first
+     * tap still means "turn on" even while LEDs are temporarily lit. */
+    frontlight_peek_cancel();
     g_app.light_on = !g_app.light_on;
     frontlight_set_on(g_app.light_on, g_app.cfg.brightness);
     g_app.cfg.light_on = g_app.light_on;
     config_save(&g_app.cfg);
-    {
-        int fg = g_app.cfg.night ? WHITE : BLACK;
-        int bg = g_app.cfg.night ? BLACK : WHITE;
-        const reader_engine *eng = engine_active();
-        SetFont(g_app.font_bar, fg);
-        update_bar_label();
-        bar_draw(&g_app.bar, g_app.clock, g_app.cfg.night, g_app.light_on,
-                 g_app.light_available,
-                 eng ? eng->current_page() : 0,
-                 eng ? eng->page_count() : 0, fg, bg,
-                 g_app.bar_pages_label);
-        refresh_partial(g_app.bar.light_x, 0, g_app.bar.light_w, g_app.bar.height);
-    }
+    refresh_light_button();
 }
 
 void ui_handle_pointer(int x, int y)
@@ -731,6 +767,9 @@ void ui_handle_pointer(int x, int y)
         break;
     case SCREEN_CONTENTS:
         contents_hit(x, y);
+        break;
+    case SCREEN_FONTS:
+        fonts_hit(x, y);
         break;
     case SCREEN_SUGGEST_ASK:
         suggest_ask_hit(x, y);
@@ -782,6 +821,9 @@ void ui_handle_key(int key)
             config_save(&g_app.cfg);
             engine_close();
             ui_show_home();
+        } else if (g_app.screen == SCREEN_FONTS) {
+            g_app.screen = SCREEN_SETTINGS;
+            ui_draw();
         } else if (g_app.screen == SCREEN_SETTINGS ||
                    g_app.screen == SCREEN_CONTENTS) {
             g_app.screen = SCREEN_READING;
@@ -900,6 +942,7 @@ void ui_init(void)
                 g_app.cfg.warmth_valid = 1;
             }
         }
+        frontlight_peek_set_on_end(on_frontlight_peek_end);
     }
 
     /* Do not init crengine/MuPDF here — that was crashing before any UI paint. */
@@ -967,6 +1010,9 @@ static int main_handler(int type, int par1, int par2)
         break;
     case EVT_SHOW:
         boot_marker("naskilla: EVT_SHOW");
+        reader_log("evt SHOW fl=%d on=%d", GetFrontlightState(), frontlight_is_on());
+        sync_light_ui_from_device();
+        frontlight_peek_on_show();
         if (g_launch_path[0] && !g_opened_launch) {
             g_opened_launch = 1;
             g_resumed_last = 1;
@@ -983,8 +1029,17 @@ static int main_handler(int type, int par1, int par2)
         }
         boot_marker("naskilla: EVT_SHOW done");
         break;
+    case EVT_FOREGROUND:
+        /* Keylock sleep/wake often resumes here without a new EVT_SHOW. */
+        reader_log("evt FOREGROUND fl=%d on=%d", GetFrontlightState(), frontlight_is_on());
+        sync_light_ui_from_device();
+        frontlight_peek_on_show();
+        break;
     case EVT_HIDE:
         ui_on_hide();
+        break;
+    case EVT_BACKGROUND:
+        reader_log("evt BACKGROUND");
         break;
     case EVT_POINTERUP:
         ui_handle_pointer(par1, par2);

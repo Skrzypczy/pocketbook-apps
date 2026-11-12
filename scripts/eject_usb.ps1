@@ -17,8 +17,7 @@ if ($driveLetterNormalized -notmatch '^[A-Za-z]:$') {
 
 Write-Host "Attempting safe eject for $driveLetterNormalized" -ForegroundColor Yellow
 
-# Flush any cached file buffers (best-effort)
-[void][System.IO.File]::Open("$driveLetterNormalized\\$null", 'Open', 'Read') 2>$null
+# Give the OS a moment to finish writes (avoid broken File.Open flush)
 Start-Sleep -Milliseconds 500
 
 $driveEject = New-Object -ComObject Shell.Application

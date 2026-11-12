@@ -19,6 +19,7 @@ void contents_load(void)
     }
     g_app.toc_count = 0;
     g_app.toc_scroll = 0;
+    g_app.toc_is_bookmarks = 0;
     if (eng)
         g_app.toc_count = eng->contents(g_app.toc, ENGINE_TOC_MAX);
 }
@@ -40,7 +41,9 @@ void contents_draw(void)
     FillArea(0, 0, sw, sh, bg);
     if (g_app.font_ui)
         SetFont(g_app.font_ui, fg);
-    DrawTextRect(0, 0, sw, ui_title_h(), "Contents", ALIGN_CENTER | VALIGN_MIDDLE);
+    DrawTextRect(0, 0, sw, ui_title_h(),
+                 g_app.toc_is_bookmarks ? "Bookmarks" : "Contents",
+                 ALIGN_CENTER | VALIGN_MIDDLE);
 
     if (g_app.toc_count == 0) {
         DrawTextRect(m, sh / 2 - 20, sw - 2 * m, 40,
@@ -92,6 +95,7 @@ int contents_hit(int x, int y)
             break;
         if (y >= yy && y < yy + row_h) {
             const reader_engine *eng = engine_active();
+            ui_remember_jump();
             if (eng)
                 eng->set_position(g_app.toc[idx].position);
             ui_save_position();

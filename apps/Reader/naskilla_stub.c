@@ -41,7 +41,7 @@ static void draw_home(void)
     FillArea(0, 0, sw, sh, WHITE);
     if (font)
         SetFont(font, BLACK);
-    DrawTextRect(20, sh / 2 - 80, sw - 40, 60, "NaSkilla",
+    DrawTextRect(20, sh / 2 - 80, sw - 40, 60, "NaSkilla Reader",
                  ALIGN_CENTER | VALIGN_MIDDLE);
     DrawTextRect(20, sh / 2, sw - 40, 40, "Stub OK — logging works",
                  ALIGN_CENTER | VALIGN_MIDDLE);

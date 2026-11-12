@@ -107,6 +107,33 @@ if errorlevel 1 (
     set /a SUCCESS+=1
 )
 
+echo Installing NaSkilla Reader.app...
+copy /Y "build\NaSkilla.app" "%POCKETBOOK_DRIVE%\applications\NaSkilla Reader.app" >nul 2>&1
+if errorlevel 1 (
+    echo   FAILED - Make sure build\NaSkilla.app exists
+    set /a FAILED+=1
+) else (
+    echo   OK
+    set /a SUCCESS+=1
+    if exist "%POCKETBOOK_DRIVE%\applications\NaSkilla.app" del /F /Q "%POCKETBOOK_DRIVE%\applications\NaSkilla.app" >nul 2>&1
+)
+
+echo Installing NaSkilla debug.cfg...
+if not exist "%POCKETBOOK_DRIVE%\system\state\naskilla" mkdir "%POCKETBOOK_DRIVE%\system\state\naskilla"
+if exist "config\naskilla_debug.cfg" (
+    if not exist "%POCKETBOOK_DRIVE%\system\state\naskilla\debug.cfg" (
+        copy /Y "config\naskilla_debug.cfg" "%POCKETBOOK_DRIVE%\system\state\naskilla\debug.cfg" >nul 2>&1
+        echo   OK ^(created default debug.cfg^)
+        set /a SUCCESS+=1
+    ) else (
+        echo   SKIP - debug.cfg already present ^(not overwritten^)
+        set /a SKIPPED+=1
+    )
+) else (
+    echo   SKIP - config\naskilla_debug.cfg missing
+    set /a SKIPPED+=1
+)
+
 REM Backup extensions.cfg once, then prefer Reader for supported types
 echo Registering Reader in extensions.cfg...
 set EXTCFG=%POCKETBOOK_DRIVE%\system\config\extensions.cfg
@@ -195,6 +222,7 @@ echo   - applications\Vault.app
 echo   - applications\AISearch.app
 echo   - applications\Chef.app
 echo   - applications\Reader.app
+echo   - applications\NaSkilla Reader.app
 echo   - system\config\extensions.cfg (Reader first for epub/fb2/txt/html/rtf/pdf; backup .simple-reader-bak)
 echo   - .ai_api_key (for AISearch and Chef)
 echo   - system\fonts\Bookerly*.ttf (Amazon Kindle font)

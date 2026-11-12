@@ -22,6 +22,8 @@ typedef struct engine_layout {
     int night;              /* 0 day, 1 night */
     int publisher_styles;   /* 0 off, 1 on */
     const char *font_face;  /* may be NULL */
+    int page_w;             /* 0 = keep current view size */
+    int page_h;
 } engine_layout;
 
 typedef struct engine_toc_item {
@@ -41,11 +43,17 @@ typedef struct reader_engine {
     int (*draw)(unsigned char *gray, int width, int height, int stride);
     /* Plain text of the current page. 0 = buf filled. May be NULL. */
     int (*page_text)(char *buf, size_t buflen);
+    /* Plain text for 1-based page without changing position. May be NULL. */
+    int (*page_text_at)(int page, char *buf, size_t buflen);
     int (*get_position)(char *buf, size_t buflen);
     int (*set_position)(const char *text);
     int (*contents)(engine_toc_item *items, int max_items);
     int (*is_reflowable)(void);         /* 1 = show font/margin settings */
     const char *(*name)(void);
+    /* Find next/prev match. 0 = jumped to a hit. May be NULL. */
+    int (*find)(const char *query, int reverse);
+    /* Current TOC chapter title into buf. 0 = ok. May be NULL. */
+    int (*chapter_title)(char *buf, size_t buflen);
 } reader_engine;
 
 /* Returns the engine table for path, or NULL if unsupported. */
@@ -60,6 +68,9 @@ int engine_supports_extension(const char *path);
 /* Cache / font init once per process (crengine). */
 int engine_global_init(const char *cache_dir, const char *fonts_dir);
 void engine_global_shutdown(void);
+
+/* Registered typeface names (crengine). Returns count written, capped at max. */
+int engine_list_faces(char out[][64], int max);
 
 #ifdef __cplusplus
 }

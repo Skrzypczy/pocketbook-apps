@@ -19,7 +19,7 @@ if not exist "build" mkdir build
 echo Building Vault.app...
 docker run --rm -v "%cd%:/src" -w /src --entrypoint sh ^
   larento/pocketbook-sdk:5.19-a13 ^
-  -c "export LD_LIBRARY_PATH=/sdk/usr/lib && /sdk/usr/bin/arm-obreey-linux-gnueabi-gcc -I/sdk/usr/arm-obreey-linux-gnueabi/sysroot/usr/include/freetype2 apps/Vault/Vault.c -o build/Vault.app -linkview"
+  -c "export LD_LIBRARY_PATH=/sdk/usr/lib && /sdk/usr/bin/arm-obreey-linux-gnueabi-gcc -I/sdk/usr/arm-obreey-linux-gnueabi/sysroot/usr/include/freetype2 -Iapps/common apps/Vault/Vault.c apps/common/frontlight_peek.c -o build/Vault.app -linkview"
 if errorlevel 1 (
     echo   FAILED
 ) else (
@@ -29,7 +29,7 @@ if errorlevel 1 (
 echo Building AISearch.app...
 docker run --rm -v "%cd%:/src" -w /src --entrypoint sh ^
   larento/pocketbook-sdk:5.19-a13 ^
-  -c "export LD_LIBRARY_PATH=/sdk/usr/lib && /sdk/usr/bin/arm-obreey-linux-gnueabi-gcc -I/sdk/usr/arm-obreey-linux-gnueabi/sysroot/usr/include/freetype2 apps/AISearch/AISearch.c -o build/AISearch.app -linkview -lsqlite3 -lcurl"
+  -c "export LD_LIBRARY_PATH=/sdk/usr/lib && /sdk/usr/bin/arm-obreey-linux-gnueabi-gcc -I/sdk/usr/arm-obreey-linux-gnueabi/sysroot/usr/include/freetype2 -Iapps/common apps/AISearch/AISearch.c apps/common/frontlight_peek.c -o build/AISearch.app -linkview -lsqlite3 -lcurl"
 if errorlevel 1 (
     echo   FAILED
 ) else (
@@ -39,7 +39,7 @@ if errorlevel 1 (
 echo Building Chef.app...
 docker run --rm -v "%cd%:/src" -w /src --entrypoint sh ^
   larento/pocketbook-sdk:5.19-a13 ^
-  -c "export LD_LIBRARY_PATH=/sdk/usr/lib && /sdk/usr/bin/arm-obreey-linux-gnueabi-gcc -I/sdk/usr/arm-obreey-linux-gnueabi/sysroot/usr/include/freetype2 apps/Chef/Chef.c -o build/Chef.app -linkview -lcurl"
+  -c "export LD_LIBRARY_PATH=/sdk/usr/lib && /sdk/usr/bin/arm-obreey-linux-gnueabi-gcc -I/sdk/usr/arm-obreey-linux-gnueabi/sysroot/usr/include/freetype2 -Iapps/common apps/Chef/Chef.c apps/common/frontlight_peek.c -o build/Chef.app -linkview -lcurl"
 if errorlevel 1 (
     echo   FAILED
 ) else (
@@ -47,7 +47,9 @@ if errorlevel 1 (
 )
 
 echo Building Reader.app (crengine + MuPDF)...
-docker run --rm -v "%cd%:/src" -w /src --entrypoint /bin/bash ^
+for /f %%i in ('git rev-parse --short HEAD 2^>nul') do set NASKILLA_GIT_SHA=%%i
+if not defined NASKILLA_GIT_SHA set NASKILLA_GIT_SHA=unknown
+docker run --rm -e NASKILLA_GIT_SHA=%NASKILLA_GIT_SHA% -v "%cd%:/src" -w /src --entrypoint /bin/bash ^
   larento/pocketbook-sdk:5.19-a13 ^
   /src/scripts/build_reader.sh
 if errorlevel 1 (

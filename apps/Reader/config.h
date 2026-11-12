@@ -4,10 +4,15 @@
 #include "engine.h"
 
 #define CFG_PATH            "/mnt/ext1/.naskilla.cfg"
+#define CFG_BOOKMETA_PATH   "/mnt/ext1/system/state/naskilla/bookmeta.cfg"
 #define CFG_CACHE_DIR       "/mnt/ext1/system/state/naskilla/cr3cache"
 #define CFG_STATE_DIR       "/mnt/ext1/system/state/naskilla"
 #define CFG_LOG_PATH        "/mnt/ext1/system/state/naskilla.log"
 #define CFG_BOOT_LOG        "/mnt/ext1/naskilla_boot.log"
+#define CFG_DEBUG_PATH      "/mnt/ext1/system/state/naskilla/debug.cfg"
+#define CFG_SENTINEL_PATH   "/mnt/ext1/system/state/naskilla/draw_inflight"
+/* Sticky after a Draw crash until the user deletes it or draw succeeds. */
+#define CFG_DRAW_SAFE_PATH  "/mnt/ext1/system/state/naskilla/draw_safe_text"
 #define CFG_FONTS_DIR       "/mnt/ext1/system/fonts"
 #define CFG_BOOKS_DIR       "/mnt/ext1/Books"
 #define CFG_LIBRARY_DIR     "/mnt/ext1/Library"
@@ -15,6 +20,8 @@
 #define CFG_SENDTO_DIR2     "/mnt/ext1/SendToPb"
 #define CFG_SENDTO_DIR3     "/mnt/ext1/Send to PocketBook"
 #define CFG_API_KEY_FILE    "/mnt/ext1/.ai_api_key"
+#define CFG_APP_NAME        "NaSkilla Reader"
+#define CFG_APP_PATH        "/mnt/ext1/applications/NaSkilla Reader.app"
 #define CFG_LOG_MAX         (64 * 1024)
 
 #define CFG_FONT_FACE_MAX   64
@@ -66,7 +73,44 @@ int config_save(const reader_config *cfg);
 void config_remember_book(reader_config *cfg, const char *path);
 int config_get_position(const char *path, char *buf, size_t buflen);
 int config_set_position(const char *path, const char *pos);
+/* Generic per-book keys: prog.<path>, fsize.<path>, bmk.<path>.N */
+int config_get_book_kv(const char *prefix, const char *path, char *buf, size_t buflen);
+int config_set_book_kv(const char *prefix, const char *path, const char *val);
+int config_get_progress(const char *path, int *page, int *pages);
+int config_set_progress(const char *path, int page, int pages);
+int config_get_book_font_size(const char *path, int *size_out);
+int config_set_book_font_size(const char *path, int size);
+
+#define CFG_BOOKMARKS_MAX 20
+typedef struct book_bookmark {
+    char pos[ENGINE_POS_MAX];
+    char title[96];
+    int page;
+} book_bookmark;
+int config_bookmarks_load(const char *path, book_bookmark *out, int max);
+int config_bookmark_add(const char *path, const book_bookmark *bm);
 const char *config_find_sendto_dir(void);
+
+/* Cached GetBookInfo / sidecar fields for recent books only.
+ * Cap is CFG_RECENT_MAX; oldest entries are dropped. */
+typedef struct book_meta {
+    char path[512];
+    char title[160];
+    char author[80];
+    char series[120];
+    int index;
+    int year;
+} book_meta;
+
+void book_meta_load(void);
+void book_meta_save(void);
+/* 1 if found; copies into out. Touches MRU order. */
+int book_meta_get(const char *path, book_meta *out);
+/* Insert or refresh; keeps at most CFG_RECENT_MAX (MRU). */
+void book_meta_put(const char *path, const char *title, const char *author,
+                   const char *series, int index, int year);
+/* Drop entries whose path is not in the recent list. */
+void book_meta_prune_recent(const reader_config *cfg);
 
 #ifdef __cplusplus
 extern "C" {

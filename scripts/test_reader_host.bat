@@ -12,4 +12,12 @@ if %ERR% NEQ 0 (
 )
 echo Host tests OK
 popd
+
+echo Running frontlight_peek host tests...
+docker run --rm -v "%REPO_ROOT%:/src" -w /src/apps/common gcc:14-bookworm bash -c "gcc -DFRONTLIGHT_PEEK_HOST_TEST -I. test_frontlight_peek.c frontlight_peek.c -o /tmp/test_frontlight_peek && /tmp/test_frontlight_peek"
+set ERR=%ERRORLEVEL%
+if %ERR% NEQ 0 (
+  echo frontlight_peek host tests FAILED
+  exit /b %ERR%
+)
 exit /b 0
