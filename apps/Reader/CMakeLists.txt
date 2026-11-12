@@ -28,11 +28,14 @@ add_executable(Reader.app
   main.c
   bar.c
   config.c
+  debug.c
   refresh.c
   frontlight.c
   library.c
   settings.c
   contents.c
+  suggest.c
+  extensions.c
   engine_select.c
   engine_crengine.cpp
   engine_mupdf.cpp

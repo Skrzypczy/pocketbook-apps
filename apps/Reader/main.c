@@ -1,7 +1,10 @@
+#define _POSIX_C_SOURCE 200809L
 #include "ui.h"
 #include "frontlight.h"
 #include "refresh.h"
 #include "layout.h"
+#include "debug.h"
+#include "extensions.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -13,30 +16,6 @@
 #include "inkview.h"
 
 app_state g_app;
-
-static void boot_marker(const char *msg)
-{
-    const char *paths[] = {
-        CFG_BOOT_LOG,
-        CFG_LOG_PATH,
-        "/mnt/ext1/system/state/naskilla_boot.log",
-        "/tmp/naskilla_boot.log",
-        NULL
-    };
-    int i;
-    mkdir("/mnt/ext1/system", 0755);
-    mkdir("/mnt/ext1/system/state", 0755);
-    mkdir(CFG_STATE_DIR, 0755);
-    for (i = 0; paths[i]; i++) {
-        FILE *fp = fopen(paths[i], "a");
-        if (fp) {
-            fputs(msg, fp);
-            fputc('\n', fp);
-            fflush(fp);
-            fclose(fp);
-        }
-    }
-}
 
 static void update_clock_string(void)
 {
@@ -108,7 +87,43 @@ void ui_apply_layout(void)
     layout.night = g_app.cfg.night;
     layout.publisher_styles = g_app.cfg.publisher_styles;
     layout.font_face = g_app.cfg.font_face;
+    layout.page_w = g_app.buf_w;
+    layout.page_h = g_app.buf_h;
     eng->set_layout(&layout);
+}
+
+static unsigned long now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long)ts.tv_sec * 1000UL + (unsigned long)ts.tv_nsec / 1000000UL;
+}
+
+static void update_bar_label(void)
+{
+    const reader_engine *eng = engine_active();
+    int page, pages, pct;
+    int eta_min = -1;
+    /* Compact: page/total + percent (no chapter — keeps equal bar slots even). */
+    g_app.bar_pages_label[0] = '\0';
+    if (!eng)
+        return;
+    page = eng->current_page();
+    pages = eng->page_count();
+    pct = (pages > 0) ? (page * 100) / pages : 0;
+    if (g_app.turn_gap_count >= 3 && pages > page) {
+        int i, sum = 0, n = g_app.turn_gap_count;
+        for (i = 0; i < n; i++)
+            sum += g_app.turn_gaps_ms[i];
+        if (sum > 0)
+            eta_min = (int)(((long long)(pages - page) * sum / n) / 60000LL);
+    }
+    if (eta_min >= 0)
+        snprintf(g_app.bar_pages_label, sizeof(g_app.bar_pages_label),
+                 "%d/%d %d%%~%d", page, pages, pct, eta_min);
+    else
+        snprintf(g_app.bar_pages_label, sizeof(g_app.bar_pages_label),
+                 "%d/%d %d%%", page, pages, pct);
 }
 
 void ui_save_position(void)
@@ -119,6 +134,18 @@ void ui_save_position(void)
         return;
     if (eng->get_position(pos, sizeof(pos)) == 0)
         config_set_position(g_app.open_path, pos);
+    config_set_progress(g_app.open_path, eng->current_page(), eng->page_count());
+}
+
+void ui_remember_jump(void)
+{
+    const reader_engine *eng = engine_active();
+    if (!eng)
+        return;
+    if (eng->get_position(g_app.jump_back_pos, sizeof(g_app.jump_back_pos)) == 0) {
+        g_app.jump_back_page = eng->current_page();
+        g_app.jump_back_valid = 1;
+    }
 }
 
 void ui_set_message(const char *msg)
@@ -222,6 +249,30 @@ static ifont *body_font(void)
     return g_body_font ? g_body_font : g_app.font_ui;
 }
 
+static void fill_test_pattern(unsigned char *buf, int w, int h, int stride)
+{
+    int x, y;
+    if (!buf || w <= 0 || h <= 0)
+        return;
+    for (y = 0; y < h; y++) {
+        unsigned char *row = buf + (size_t)y * (size_t)stride;
+        for (x = 0; x < w; x++) {
+            unsigned char v;
+            if (y < 8 || y >= h - 8 || x < 8 || x >= w - 8)
+                v = 0x00;
+            else if (y < h / 4)
+                v = (unsigned char)((x * 255) / (w > 1 ? w - 1 : 1));
+            else if (y < h / 2)
+                v = (x / 40) & 1 ? 0x00 : 0xFF;
+            else if (y < (3 * h) / 4)
+                v = (unsigned char)(((y - h / 2) * 255) / (h / 4 > 0 ? h / 4 : 1));
+            else
+                v = (x == y % w) ? 0x00 : 0xE0;
+            row[x] = v;
+        }
+    }
+}
+
 static void draw_reading(int full)
 {
     const reader_engine *eng = engine_active();
@@ -231,8 +282,11 @@ static void draw_reading(int full)
     int fg = g_app.cfg.night ? WHITE : BLACK;
     int bg = g_app.cfg.night ? BLACK : WHITE;
     int page = 0, pages = 0;
-    int draw_rc;
+    int draw_rc = -1;
+    int use_bitmap = 0;
+    int use_text = 0;
     icanvas *c;
+    static int s_sentinel_armed;
 
     ui_apply_fonts();
     bar_compute(&g_app.bar, sw, sh, ui_bar_h());
@@ -250,43 +304,72 @@ static void draw_reading(int full)
     }
 
     c = GetCanvas();
-    reader_log("draw_reading: canvas depth=%d scan=%d %dx%d",
+    reader_log("draw_reading: canvas depth=%d scan=%d %dx%d render=%d probe=%d",
                c ? c->depth : -1, c ? c->scanline : -1,
-               c ? c->width : -1, c ? c->height : -1);
-    boot_marker("naskilla: eng->draw");
-    draw_rc = eng->draw(g_app.page_buf, sw, page_h, g_app.buf_stride);
-    reader_log("draw_reading: eng->draw rc=%d", draw_rc);
-    boot_marker("naskilla: eng->draw done");
+               c ? c->width : -1, c ? c->height : -1,
+               (int)g_debug.render, g_debug.draw_probe);
+
+    if (g_debug.render == RENDER_PATTERN) {
+        fill_test_pattern(g_app.page_buf, sw, page_h, g_app.buf_stride);
+        draw_rc = 0;
+        use_bitmap = 1;
+        reader_log("draw_reading: synthetic pattern ready");
+    } else {
+        if (!s_sentinel_armed &&
+            (g_debug.render == RENDER_AUTO && !g_debug.force_text)) {
+            debug_sentinel_begin(g_app.open_path);
+            s_sentinel_armed = 1;
+        }
+        boot_marker("naskilla: eng->draw");
+        debug_log_mem("before_eng_draw");
+        draw_rc = eng->draw(g_app.page_buf, sw, page_h, g_app.buf_stride);
+        reader_log("draw_reading: eng->draw rc=%d", draw_rc);
+        boot_marker("naskilla: eng->draw done");
+        debug_log_mem("after_eng_draw");
+        if (draw_rc == 0)
+            use_bitmap = 1;
+        if (s_sentinel_armed) {
+            debug_sentinel_clear();
+            s_sentinel_armed = 0;
+            /* A completed Draw means it is safe to leave text-sticky mode. */
+            if (draw_rc == 0 && g_debug.render == RENDER_AUTO)
+                debug_clear_draw_safe();
+        }
+    }
+
     page = eng->current_page();
     pages = eng->page_count();
 
     boot_marker("naskilla: clear+blit");
     {
-        static char page_text[12000];
-        int use_text = 0;
+        static char page_text[24000];
         int m = ui_margin();
         page_text[0] = '\0';
-        if (eng->page_text &&
+        if (!use_bitmap && eng->page_text &&
             eng->page_text(page_text, sizeof(page_text)) == 0 && page_text[0])
             use_text = 1;
 
         ClearScreen();
         FillArea(0, 0, sw, sh, bg);
-        /* Blank page buffer is solid white. Blitting it covers the night background
-         * and then white text disappears. Skip it while we paint page text. */
-        if (!use_text && draw_rc == 0)
+        if (use_bitmap)
             blit_gray_to_screen(ui_bar_h());
         boot_marker("naskilla: blit done");
         if (g_app.font_bar)
             SetFont(g_app.font_bar, fg);
         update_clock_string();
+        update_bar_label();
         bar_draw(&g_app.bar, g_app.clock, g_app.cfg.night, g_app.light_on,
-                 g_app.light_available, page, pages, fg, bg);
+                 g_app.light_available, page, pages, fg, bg,
+                 g_app.bar_pages_label);
         if (use_text) {
             ifont *body = body_font();
             FillArea(0, ui_bar_h(), sw, page_h, bg);
             if (body)
                 SetFont(body, fg);
+            /* One crengine page only. Do not append the next page: Inkview
+             * metrics are denser, so the block ends early, but page turns
+             * must not repeat that text. Publisher layout does not affect
+             * this fallback — it only toggles the book's own CSS. */
             DrawTextRect(m, ui_bar_h() + m / 2, sw - 2 * m, page_h - m,
                          page_text, ALIGN_LEFT | VALIGN_TOP);
         }
@@ -412,12 +495,15 @@ static void notify_system_book(const char *path)
     if (info && info->title && info->title[0])
         snprintf(label, sizeof(label), "%s", info->title);
     else
-        snprintf(label, sizeof(label), "NaSkilla");
+        snprintf(label, sizeof(label), "%s", CFG_APP_NAME);
 
     write_exact(CURRENTBOOK, path);
     write_exact(CURRENTBOOK_SAVE, path);
     SetSubtaskInfo(GetCurrentTask(), 0, label, path);
-    SetFileHandler(path, "/mnt/ext1/applications/NaSkilla.app");
+    /* Only pin this book to NaSkilla when NaSkilla is the library default.
+     * Otherwise opening a book here would override the user's choice. */
+    if (extcfg_naskilla_is_default())
+        SetFileHandler(path, CFG_APP_PATH);
 
     cover = GetBookCover(path, 600, 860);
     if (cover)
@@ -483,6 +569,14 @@ void ui_open_book(const char *path)
     snprintf(g_app.last_book, sizeof(g_app.last_book), "%s", path);
     snprintf(g_app.cfg.last_book, sizeof(g_app.cfg.last_book), "%s", path);
     config_remember_book(&g_app.cfg, path);
+    if (info) {
+        book_meta_put(path,
+                      info->title ? info->title : "",
+                      info->author ? info->author : "",
+                      info->series ? info->series : "",
+                      info->numinseries,
+                      info->year);
+    }
     config_save(&g_app.cfg);
 
     ui_apply_fonts();
@@ -524,6 +618,15 @@ void ui_open_book(const char *path)
         return;
     }
     /* Bitmap Draw is skipped (OOM). Layout + position only call Render, which is safe. */
+    {
+        int book_sz = 0;
+        if (config_get_book_font_size(path, &book_sz) == 0)
+            g_app.cfg.font_size = book_sz;
+    }
+    g_app.jump_back_valid = 0;
+    g_app.turn_gap_count = 0;
+    g_app.turn_gap_i = 0;
+    g_app.last_turn_ms = 0;
     boot_marker("naskilla: apply_layout");
     ui_apply_layout();
     if (config_get_position(path, pos, sizeof(pos)) == 0 && engine_active())
@@ -536,6 +639,11 @@ void ui_open_book(const char *path)
     g_app.screen = SCREEN_READING;
     g_app.pages_since_full = 0;
     notify_system_book(path);
+    if (g_debug.crash_test) {
+        reader_log("crash_test: deliberate SIGSEGV");
+        boot_marker("naskilla: crash_test");
+        *(volatile int *)0 = 1;
+    }
     boot_marker("naskilla: before first draw");
     ui_draw();
     boot_marker("naskilla: first draw done");
@@ -545,11 +653,23 @@ static void turn_page(int next)
 {
     const reader_engine *eng = engine_active();
     int rc;
+    unsigned long t;
     if (!eng || refresh_busy())
         return;
     rc = next ? eng->next() : eng->prev();
     if (rc != 0)
         return;
+    t = now_ms();
+    if (g_app.last_turn_ms > 0 && t > g_app.last_turn_ms) {
+        int gap = (int)(t - g_app.last_turn_ms);
+        if (gap > 200 && gap < 600000) {
+            g_app.turn_gaps_ms[g_app.turn_gap_i % 8] = gap;
+            g_app.turn_gap_i++;
+            if (g_app.turn_gap_count < 8)
+                g_app.turn_gap_count++;
+        }
+    }
+    g_app.last_turn_ms = t;
     ui_save_position();
     draw_reading(0);
 }
@@ -575,10 +695,12 @@ static void toggle_light(void)
         int bg = g_app.cfg.night ? BLACK : WHITE;
         const reader_engine *eng = engine_active();
         SetFont(g_app.font_bar, fg);
+        update_bar_label();
         bar_draw(&g_app.bar, g_app.clock, g_app.cfg.night, g_app.light_on,
                  g_app.light_available,
                  eng ? eng->current_page() : 0,
-                 eng ? eng->page_count() : 0, fg, bg);
+                 eng ? eng->page_count() : 0, fg, bg,
+                 g_app.bar_pages_label);
         refresh_partial(g_app.bar.light_x, 0, g_app.bar.light_w, g_app.bar.height);
     }
 }
@@ -623,17 +745,21 @@ void ui_handle_pointer(int x, int y)
                 toggle_night();
             else if (hit == BAR_HIT_LIGHT)
                 toggle_light();
-            else if (hit == BAR_HIT_BOOKS) {
-                ui_save_position();
-                config_save(&g_app.cfg);
-                ui_show_home();
-            }
-            else if (hit == BAR_HIT_PAGES) {
+            else if (hit == BAR_HIT_OPTIONS || hit == BAR_HIT_PAGES) {
+                /* Options + page/progress share the settings/options menu. */
                 const reader_engine *eng = engine_active();
                 if (eng)
                     g_app.goto_page_tmp = eng->current_page();
                 g_app.screen = SCREEN_SETTINGS;
                 ui_draw();
+            } else if (hit == BAR_HIT_SLEEP) {
+                /* ForcingSleep() only shortens the idle timer. REQ_KEYLOCK
+                 * is the system suspend KOReader uses (power-button sleep). */
+                reader_log("bar: REQ_KEYLOCK");
+                ui_save_position();
+                config_save(&g_app.cfg);
+                iv_sleepmode(1);
+                SendGlobalRequest(REQ_KEYLOCK);
             }
             return;
         }
@@ -665,6 +791,10 @@ void ui_handle_key(int key)
                    g_app.screen == SCREEN_SUGGEST_ASK ||
                    g_app.screen == SCREEN_SUGGEST_RESULTS) {
             ui_show_home();
+        } else if (g_app.screen == SCREEN_HOME && g_app.books_from_options) {
+            g_app.books_from_options = 0;
+            g_app.screen = SCREEN_SETTINGS;
+            ui_draw();
         } else {
             CloseApp();
         }
@@ -688,10 +818,12 @@ void ui_tick_clock(void)
         int bg = g_app.cfg.night ? BLACK : WHITE;
         const reader_engine *eng = engine_active();
         SetFont(g_app.font_bar, fg);
+        update_bar_label();
         bar_draw(&g_app.bar, g_app.clock, g_app.cfg.night, g_app.light_on,
                  g_app.light_available,
                  eng ? eng->current_page() : 0,
-                 eng ? eng->page_count() : 0, fg, bg);
+                 eng ? eng->page_count() : 0, fg, bg,
+                 g_app.bar_pages_label);
         refresh_partial(g_app.bar.clock_x, 0, g_app.bar.clock_w, g_app.bar.height);
     }
 }
@@ -744,6 +876,10 @@ void ui_init(void)
 {
     memset(&g_app, 0, sizeof(g_app));
     reader_log("ui_init: start");
+    debug_init();
+    debug_install_handlers();
+    debug_log_build_id();
+    debug_log_mem("ui_init");
     config_load(&g_app.cfg);
     refresh_init();
     ui_apply_fonts();

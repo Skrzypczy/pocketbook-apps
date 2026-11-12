@@ -4,9 +4,9 @@ Four custom applications for PocketBook e-readers (tested on PocketBook Era).
 
 ---
 
-## Reader
+## NaSkilla Reader
 
-Simple production ebook reader with a minimal top bar and one settings page. Reflowable books use crengine (KOReader pin); PDF uses MuPDF 1.27.2. AGPL-3.0.
+Minimal ebook reader with a top bar and one settings page. Reflowable books use crengine (KOReader pin) and draw a real page bitmap; PDF uses MuPDF 1.27.2. AGPL-3.0. Installed as `NaSkilla Reader.app` (also copied as `Reader.app`).
 
 ### Top bar
 
@@ -15,13 +15,14 @@ Simple production ebook reader with a minimal top bar and one settings page. Ref
 | Clock | Time only (not tappable) |
 | Day / Night | Invert page colors + full refresh |
 | Light on / off | Frontlight toggle (brightness remembered) |
+| Books | Return to home |
 | `page / total` | Opens settings |
 
-Page body: left third = previous page, right two-thirds = next. Hardware NEXT/PREV keys do the same. BACK saves position and exits.
+Page body: left third = previous page, right two-thirds = next. Hardware NEXT/PREV keys do the same. BACK saves position and returns to Home.
 
 ### Settings
 
-Font face/size, margins, line spacing, publisher layout, go to page, contents, brightness, warmth, full-refresh interval, day/night. On PDF, reflow-only rows are hidden.
+Font face/size, margins, line spacing, publisher layout, go to page, contents, brightness, warmth, full-refresh interval, day/night, and which app opens books from the PocketBook library (`extensions.cfg`). On PDF, reflow-only rows are hidden. Font faces come from registered device TTFs.
 
 ### Formats
 
@@ -31,18 +32,21 @@ EPUB, FB2, FB2.ZIP, TXT, HTML, RTF, PDF. DRM, MOBI, AZW, DJVU, comics stay on th
 
 - **Continue reading** — last opened book (position restored)
 - **Send to PocketBook** — books in `SendToPocketBook` / `SendToPb` / `Send to PocketBook`
-- **Library (Books)** — recursive scan of `/mnt/ext1/Books`
-- **Smart suggestion** — Gemini picks 3 titles from those folders (Continue series / Same theme / Something different). Uses `/mnt/ext1/.ai_api_key` (same file as AISearch/Chef).
+- **Library** — recursive scan of `/mnt/ext1/Library` and `/mnt/ext1/Books`
+- **Recent** — last opened books
+- **Smart suggestion** — Gemini picks titles from those folders. Uses `/mnt/ext1/.ai_api_key` (same file as AISearch/Chef).
 
-Reading progress is saved per book on every page turn, sleep, and Back. Back from a book returns to Home.
+Reading progress is saved per book on every page turn, sleep, and Back.
 
 ### Config
 
-`/mnt/ext1/.simple_reader.cfg` — global settings, `last_book`, and per-book positions. Install backs up `system/config/extensions.cfg` to `extensions.cfg.simple-reader-bak` and registers `Reader.app` first for supported types.
+- `/mnt/ext1/.naskilla.cfg` — global settings, `last_book`, recent list, per-book positions
+- `/mnt/ext1/system/state/naskilla/debug.cfg` — Stage-1 render controls (`render`, `draw_probe`, `crash_test`); not rewritten by the app
+- Install registers `Reader.app` first for supported types and backs up `extensions.cfg` to `extensions.cfg.simple-reader-bak`
 
 ### Engine notes
 
-See [apps/Reader/ENGINE.md](../apps/Reader/ENGINE.md) for pinned commits, SDK fallback, and the on-device release checklist.
+See [apps/Reader/ENGINE.md](../apps/Reader/ENGINE.md) for pinned commits, the bitmap render path, debug flags, and the on-device checklist.
 
 ---
 

@@ -17,19 +17,29 @@ ls -la /src/build/NaSkillaStub.app
 $TRIPLE-readelf -d /src/build/NaSkillaStub.app | grep NEEDED || true
 
 INC="-I/src/apps/Reader -I/src/docs/sdk -I$SYSROOT/usr/include -I$SYSROOT/usr/include/freetype2 -I/src/third_party/mupdf/include -I/src/third_party/crengine/crengine/include -I/src/third_party/crengine_pb"
-CFLAGS="-Wall -Wextra -O2 -fPIC -ffunction-sections -fdata-sections"
+CFLAGS="-Wall -Wextra -O2 -g -fPIC -ffunction-sections -fdata-sections"
 CXXFLAGS="$CFLAGS -std=gnu++17 -include /src/third_party/crengine_pb/crsetup.h"
-DEFS="-DLINUX=1 -D_LINUX=1"
-echo "=== Compiling NaSkilla (full) ==="
+GIT_SHA=${NASKILLA_GIT_SHA:-$(git -C /src rev-parse --short HEAD 2>/dev/null || echo unknown)}
+FT_VER="unknown"
+if [ -f "$SYSROOT/usr/include/freetype2/freetype/freetype.h" ]; then
+  FT_MAJOR=$(grep -E '#define +FREETYPE_MAJOR' "$SYSROOT/usr/include/freetype2/freetype/freetype.h" | awk '{print $3}')
+  FT_MINOR=$(grep -E '#define +FREETYPE_MINOR' "$SYSROOT/usr/include/freetype2/freetype/freetype.h" | awk '{print $3}')
+  FT_PATCH=$(grep -E '#define +FREETYPE_PATCH' "$SYSROOT/usr/include/freetype2/freetype/freetype.h" | awk '{print $3}')
+  FT_VER="${FT_MAJOR}.${FT_MINOR}.${FT_PATCH}"
+fi
+DEFS="-DLINUX=1 -D_LINUX=1 -DNASKILLA_GIT_SHA=\"$GIT_SHA\" -DNASKILLA_FT_VER=\"$FT_VER\""
+echo "=== Compiling NaSkilla (full) sha=$GIT_SHA freetype=$FT_VER ==="
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/main.c -o $OUT/main.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/bar.c -o $OUT/bar.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/config.c -o $OUT/config.o
+$CC $CFLAGS $DEFS $INC -c /src/apps/Reader/debug.c -o $OUT/debug.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/refresh.c -o $OUT/refresh.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/frontlight.c -o $OUT/frontlight.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/library.c -o $OUT/library.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/settings.c -o $OUT/settings.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/contents.c -o $OUT/contents.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/suggest.c -o $OUT/suggest.o
+$CC $CFLAGS $DEFS $INC -c /src/apps/Reader/extensions.c -o $OUT/extensions.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/engine_select.c -o $OUT/engine_select.o
 $CXX $CXXFLAGS $DEFS $INC -c /src/apps/Reader/engine_crengine.cpp -o $OUT/engine_crengine.o
 $CXX $CXXFLAGS $DEFS $INC -c /src/apps/Reader/engine_mupdf.cpp -o $OUT/engine_mupdf.o
@@ -37,10 +47,10 @@ $CXX $CXXFLAGS $DEFS $INC -c /src/apps/Reader/engine_mupdf.cpp -o $OUT/engine_mu
 echo "=== Linking NaSkilla.app (static png/jpeg/freetype/z) ==="
 # Static-link libs that may be missing or version-mismatched on device firmware.
 # Keep curl+inkview dynamic (same as Chef.app which already runs on this device).
-$CXX -o /src/build/NaSkilla.app \
-  $OUT/main.o $OUT/bar.o $OUT/config.o $OUT/refresh.o $OUT/frontlight.o \
-  $OUT/library.o $OUT/settings.o $OUT/contents.o $OUT/suggest.o $OUT/engine_select.o \
-  $OUT/engine_crengine.o $OUT/engine_mupdf.o \
+$CXX -o /src/build/NaSkilla.debug \
+  $OUT/main.o $OUT/bar.o $OUT/config.o $OUT/debug.o $OUT/refresh.o $OUT/frontlight.o \
+  $OUT/library.o $OUT/settings.o $OUT/contents.o $OUT/suggest.o $OUT/extensions.o \
+  $OUT/engine_select.o $OUT/engine_crengine.o $OUT/engine_mupdf.o \
   -Wl,--start-group \
   $OUT/crengine/libcrengine.a $OUT/crengine/chmlib/libchmlib.a $OUT/crengine/antiword/libantiword.a \
   $MUPDF_OUT/libmupdf.a $MUPDF_OUT/libmupdf-third.a \
@@ -49,8 +59,10 @@ $CXX -o /src/build/NaSkilla.app \
   -L$SYSROOT/usr/lib -lcurl \
   -linkview -lpthread -ldl -lm \
   -static-libstdc++ -static-libgcc
+cp -f /src/build/NaSkilla.debug /src/build/NaSkilla.app
+$TRIPLE-strip --strip-unneeded /src/build/NaSkilla.app || true
 cp -f /src/build/NaSkilla.app /src/build/Reader.app
-ls -la /src/build/NaSkilla.app
+ls -la /src/build/NaSkilla.app /src/build/NaSkilla.debug
 echo === NEEDED ===
 $TRIPLE-readelf -d /src/build/NaSkilla.app | grep NEEDED
 echo DONE

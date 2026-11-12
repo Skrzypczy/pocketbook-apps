@@ -1,21 +1,31 @@
 #include "ui.h"
 #include "frontlight.h"
 #include "layout.h"
+#include "extensions.h"
 
 #include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "inkview.h"
 
 typedef enum {
-    ROW_FONT_FACE = 0,
+    ROW_BOOKS = 0,
+    ROW_DEFAULT_READER,
+    ROW_FONT_FACE,
     ROW_FONT_SIZE,
     ROW_MARGINS,
     ROW_SPACING,
     ROW_PUBLISHER,
     ROW_GOTO,
     ROW_CONTENTS,
+    ROW_BOOKMARK,
+    ROW_BOOKMARKS,
+    ROW_JUMP_BACK,
+    ROW_FIND,
+    ROW_FIND_NEXT,
+    ROW_NEXT_SERIES,
     ROW_BRIGHTNESS,
     ROW_WARMTH,
     ROW_FULL_REFRESH,
@@ -35,6 +45,12 @@ static int row_visible(settings_row r)
     case ROW_SPACING:
     case ROW_PUBLISHER:
         return reflow;
+    case ROW_JUMP_BACK:
+        return g_app.jump_back_valid;
+    case ROW_BACK:
+        return 0; /* pinned to the bottom bar */
+    case ROW_FIND_NEXT:
+        return g_app.find_query[0] != '\0';
     case ROW_BRIGHTNESS:
         return g_app.light_available;
     case ROW_WARMTH:
@@ -47,6 +63,15 @@ static int row_visible(settings_row r)
 static void row_label(settings_row r, char *buf, size_t n)
 {
     switch (r) {
+    case ROW_BOOKS:
+        snprintf(buf, n, "Books");
+        break;
+    case ROW_DEFAULT_READER: {
+        char who[EXTCFG_LABEL_MAX];
+        extcfg_current_label(who, sizeof(who));
+        snprintf(buf, n, "Open books with: %s", who);
+        break;
+    }
     case ROW_FONT_FACE:
         snprintf(buf, n, "Font: %s", g_app.cfg.font_face);
         break;
@@ -68,6 +93,26 @@ static void row_label(settings_row r, char *buf, size_t n)
         break;
     case ROW_CONTENTS:
         snprintf(buf, n, "Contents");
+        break;
+    case ROW_BOOKMARK:
+        snprintf(buf, n, "Bookmark this page");
+        break;
+    case ROW_BOOKMARKS:
+        snprintf(buf, n, "Bookmarks");
+        break;
+    case ROW_JUMP_BACK:
+        snprintf(buf, n, "Back to page %d", g_app.jump_back_page);
+        break;
+    case ROW_FIND:
+        snprintf(buf, n, "Find%s%s",
+                 g_app.find_query[0] ? ": " : "",
+                 g_app.find_query[0] ? g_app.find_query : "");
+        break;
+    case ROW_FIND_NEXT:
+        snprintf(buf, n, "Find next");
+        break;
+    case ROW_NEXT_SERIES:
+        snprintf(buf, n, "Next in series");
         break;
     case ROW_BRIGHTNESS:
         snprintf(buf, n, "Brightness: %d", g_app.cfg.brightness);
@@ -107,13 +152,13 @@ void settings_draw(void)
     FillArea(0, 0, sw, sh, bg);
     if (g_app.font_ui)
         SetFont(g_app.font_ui, fg);
-    DrawTextRect(0, 0, sw, ui_title_h(), "Settings", ALIGN_CENTER | VALIGN_MIDDLE);
+    DrawTextRect(0, 0, sw, ui_title_h(), "Options", ALIGN_CENTER | VALIGN_MIDDLE);
 
     for (r = 0; r < ROW_COUNT; r++) {
         char label[128];
         if (!row_visible((settings_row)r))
             continue;
-        if (y + row_h > sh)
+        if (y + row_h > sh - ui_action_h())
             break;
         row_label((settings_row)r, label, sizeof(label));
         DrawTextRect(m, y, sw - 2 * m - 200, row_h - 4, label,
@@ -130,14 +175,50 @@ void settings_draw(void)
         DrawLine(m, y + row_h - 1, sw - m, y + row_h - 1, fg);
         y += row_h;
     }
+    DrawTextRect(m, sh - ui_action_h(), sw - 2 * m, ui_action_h(), "Back",
+                 ALIGN_CENTER | VALIGN_MIDDLE);
+}
+
+static void settings_find_keyboard(char *text)
+{
+    const reader_engine *eng;
+    if (text)
+        snprintf(g_app.find_query, sizeof(g_app.find_query), "%s", text);
+    eng = engine_active();
+    if (eng && eng->find && g_app.find_query[0]) {
+        ui_remember_jump();
+        if (eng->find(g_app.find_query, 0) == 0) {
+            ui_save_position();
+            g_app.screen = SCREEN_READING;
+            ui_draw();
+            return;
+        }
+    }
+    g_app.screen = SCREEN_SETTINGS;
+    ui_draw();
 }
 
 static void cycle_font_face(void)
 {
-    if (strcmp(g_app.cfg.font_face, "Bookerly") == 0)
-        snprintf(g_app.cfg.font_face, sizeof(g_app.cfg.font_face), "LiberationSans");
-    else
-        snprintf(g_app.cfg.font_face, sizeof(g_app.cfg.font_face), "Bookerly");
+    char faces[32][64];
+    int n = engine_list_faces(faces, 32);
+    int i;
+    int cur = -1;
+    if (n <= 0) {
+        if (strcmp(g_app.cfg.font_face, "Bookerly") == 0)
+            snprintf(g_app.cfg.font_face, sizeof(g_app.cfg.font_face), "Liberation Sans");
+        else
+            snprintf(g_app.cfg.font_face, sizeof(g_app.cfg.font_face), "Bookerly");
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        if (strcmp(g_app.cfg.font_face, faces[i]) == 0) {
+            cur = i;
+            break;
+        }
+    }
+    cur = (cur + 1) % n;
+    snprintf(g_app.cfg.font_face, sizeof(g_app.cfg.font_face), "%s", faces[cur]);
 }
 
 static int adjust_row(settings_row r, int dir)
@@ -147,6 +228,8 @@ static int adjust_row(settings_row r, int dir)
         g_app.cfg.font_size += dir * 2;
         if (g_app.cfg.font_size < CFG_FONT_MIN) g_app.cfg.font_size = CFG_FONT_MIN;
         if (g_app.cfg.font_size > CFG_FONT_MAX) g_app.cfg.font_size = CFG_FONT_MAX;
+        if (g_app.open_path[0])
+            config_set_book_font_size(g_app.open_path, g_app.cfg.font_size);
         return 1;
     case ROW_MARGINS:
         g_app.cfg.margin += dir * 5;
@@ -206,10 +289,34 @@ int settings_hit(int x, int y)
     int r;
 
     (void)sh;
+    if (y >= sh - ui_action_h()) {
+        config_save(&g_app.cfg);
+        ui_apply_layout();
+        if (g_app.open_path[0] && engine_active())
+            g_app.screen = SCREEN_READING;
+        else
+            g_app.screen = SCREEN_HOME;
+        ui_draw();
+        return 1;
+    }
     for (r = 0; r < ROW_COUNT; r++) {
         if (!row_visible((settings_row)r))
             continue;
         if (y >= yy && y < yy + row_h) {
+            if (r == ROW_BOOKS) {
+                ui_save_position();
+                config_save(&g_app.cfg);
+                g_app.books_from_options = 1;
+                ui_show_home();
+                return 1;
+            }
+            if (r == ROW_DEFAULT_READER) {
+                if (extcfg_cycle_default() != 0) {
+                    /* Still redraw so "unavailable" is visible if write failed. */
+                }
+                ui_draw();
+                return 1;
+            }
             if (r == ROW_BACK) {
                 config_save(&g_app.cfg);
                 ui_apply_layout();
@@ -218,9 +325,79 @@ int settings_hit(int x, int y)
                 return 1;
             }
             if (r == ROW_CONTENTS) {
+                ui_remember_jump();
                 contents_load();
                 g_app.screen = SCREEN_CONTENTS;
                 ui_draw();
+                return 1;
+            }
+            if (r == ROW_BOOKMARK) {
+                const reader_engine *eng = engine_active();
+                book_bookmark bm;
+                memset(&bm, 0, sizeof(bm));
+                if (eng && g_app.open_path[0] &&
+                    eng->get_position(bm.pos, sizeof(bm.pos)) == 0) {
+                    bm.page = eng->current_page();
+                    if (eng->chapter_title)
+                        eng->chapter_title(bm.title, sizeof(bm.title));
+                    if (!bm.title[0])
+                        snprintf(bm.title, sizeof(bm.title), "Page %d", bm.page);
+                    config_bookmark_add(g_app.open_path, &bm);
+                }
+                ui_draw();
+                return 1;
+            }
+            if (r == ROW_BOOKMARKS) {
+                book_bookmark bms[CFG_BOOKMARKS_MAX];
+                int n = config_bookmarks_load(g_app.open_path, bms, CFG_BOOKMARKS_MAX);
+                int i;
+                if (!g_app.toc)
+                    g_app.toc = (engine_toc_item *)calloc(ENGINE_TOC_MAX, sizeof(engine_toc_item));
+                g_app.toc_count = 0;
+                g_app.toc_scroll = 0;
+                g_app.toc_is_bookmarks = 1;
+                for (i = 0; i < n && g_app.toc; i++) {
+                    snprintf(g_app.toc[i].title, ENGINE_TITLE_MAX, "p.%d %s",
+                             bms[i].page, bms[i].title);
+                    snprintf(g_app.toc[i].position, ENGINE_POS_MAX, "%s", bms[i].pos);
+                    g_app.toc_count++;
+                }
+                g_app.screen = SCREEN_CONTENTS;
+                ui_draw();
+                return 1;
+            }
+            if (r == ROW_JUMP_BACK && g_app.jump_back_valid) {
+                const reader_engine *eng = engine_active();
+                if (eng)
+                    eng->set_position(g_app.jump_back_pos);
+                g_app.jump_back_valid = 0;
+                ui_save_position();
+                g_app.screen = SCREEN_READING;
+                ui_draw();
+                return 1;
+            }
+            if (r == ROW_FIND) {
+                OpenKeyboard("Find in book", g_app.find_query,
+                             (int)sizeof(g_app.find_query) - 1, KBD_NORMAL,
+                             settings_find_keyboard);
+                return 1;
+            }
+            if (r == ROW_FIND_NEXT) {
+                const reader_engine *eng = engine_active();
+                if (eng && eng->find && g_app.find_query[0]) {
+                    ui_remember_jump();
+                    if (eng->find(g_app.find_query, 0) == 0) {
+                        ui_save_position();
+                        g_app.screen = SCREEN_READING;
+                        ui_draw();
+                        return 1;
+                    }
+                }
+                ui_draw();
+                return 1;
+            }
+            if (r == ROW_NEXT_SERIES) {
+                ui_open_next_in_series();
                 return 1;
             }
             if (r == ROW_FONT_FACE) {
@@ -239,9 +416,9 @@ int settings_hit(int x, int y)
                 return 1;
             }
             if (r == ROW_GOTO && x > sw / 2 - 40 && x < sw / 2 + 40) {
-                /* center tap applies go-to */
                 const reader_engine *eng = engine_active();
                 if (eng) {
+                    ui_remember_jump();
                     eng->go_to(g_app.goto_page_tmp);
                     ui_save_position();
                 }
