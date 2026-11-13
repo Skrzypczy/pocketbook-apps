@@ -62,6 +62,7 @@ typedef struct reader_config {
     int light_on;       /* -1 = leave device alone at launch until user toggles */
     int warmth;         /* -1 = unread from device */
     int warmth_valid;
+    int bar_progress;   /* 0 pages, 1 percent, 2 ETA */
     char last_book[512];
     char recent[CFG_RECENT_MAX][512];
     int recent_count;

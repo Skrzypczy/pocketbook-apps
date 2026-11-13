@@ -35,6 +35,7 @@ void config_set_defaults(reader_config *cfg)
     cfg->light_on = -1;
     cfg->warmth = -1;
     cfg->warmth_valid = 0;
+    cfg->bar_progress = 0;
     cfg->last_book[0] = '\0';
 }
 
@@ -79,7 +80,8 @@ static void apply_kv(reader_config *cfg, const char *key, const char *val)
     else if (strcmp(key, "warmth") == 0) {
         cfg->warmth = clamp_int(n, CFG_WARMTH_MIN, CFG_WARMTH_MAX);
         cfg->warmth_valid = 1;
-    }
+    } else if (strcmp(key, "bar_progress") == 0)
+        cfg->bar_progress = clamp_int(n, 0, 2);
 }
 
 int config_load(reader_config *cfg)
@@ -189,6 +191,7 @@ int config_save(const reader_config *cfg)
         fprintf(out, "light_on=%d\n", cfg->light_on);
     if (cfg->warmth_valid)
         fprintf(out, "warmth=%d\n", cfg->warmth);
+    fprintf(out, "bar_progress=%d\n", cfg->bar_progress);
 
     /* Flush the book-meta cache alongside the main config. */
     book_meta_save();

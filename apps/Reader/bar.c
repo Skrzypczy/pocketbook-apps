@@ -5,6 +5,42 @@
 
 #include "inkview.h"
 
+void bar_format_progress(int mode, int page, int pages, long eta_sec,
+                         char *out, size_t out_n)
+{
+    long mins;
+
+    if (!out || out_n == 0)
+        return;
+    out[0] = '\0';
+
+    if (mode == BAR_PROGRESS_PERCENT) {
+        int pct = (pages > 0) ? (page * 100) / pages : 0;
+        snprintf(out, out_n, "%d%%", pct);
+        return;
+    }
+    if (mode == BAR_PROGRESS_ETA) {
+        if (eta_sec < 0) {
+            snprintf(out, out_n, "~--");
+            return;
+        }
+        if (eta_sec < 60) {
+            snprintf(out, out_n, "<1m");
+            return;
+        }
+        /* Round up to whole minutes. */
+        mins = (eta_sec + 59) / 60;
+        if (mins < 60) {
+            snprintf(out, out_n, "~%ldm", mins);
+            return;
+        }
+        snprintf(out, out_n, "~%ldh%02ldm", mins / 60, mins % 60);
+        return;
+    }
+    /* Default: pages */
+    snprintf(out, out_n, "%d/%d", page, pages);
+}
+
 void bar_compute(bar_layout *b, int screen_w, int screen_h, int height)
 {
     int unit;

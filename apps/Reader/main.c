@@ -103,28 +103,23 @@ static unsigned long now_ms(void)
 static void update_bar_label(void)
 {
     const reader_engine *eng = engine_active();
-    int page, pages, pct;
-    int eta_min = -1;
-    /* Compact: page/total + percent (no chapter — keeps equal bar slots even). */
+    int page, pages;
+    long eta_sec = -1;
+
     g_app.bar_pages_label[0] = '\0';
     if (!eng)
         return;
     page = eng->current_page();
     pages = eng->page_count();
-    pct = (pages > 0) ? (page * 100) / pages : 0;
     if (g_app.turn_gap_count >= 3 && pages > page) {
         int i, sum = 0, n = g_app.turn_gap_count;
         for (i = 0; i < n; i++)
             sum += g_app.turn_gaps_ms[i];
         if (sum > 0)
-            eta_min = (int)(((long long)(pages - page) * sum / n) / 60000LL);
+            eta_sec = (long)(((long long)(pages - page) * sum / n) / 1000LL);
     }
-    if (eta_min >= 0)
-        snprintf(g_app.bar_pages_label, sizeof(g_app.bar_pages_label),
-                 "%d/%d %d%%~%d", page, pages, pct, eta_min);
-    else
-        snprintf(g_app.bar_pages_label, sizeof(g_app.bar_pages_label),
-                 "%d/%d %d%%", page, pages, pct);
+    bar_format_progress(g_app.cfg.bar_progress, page, pages, eta_sec,
+                        g_app.bar_pages_label, sizeof(g_app.bar_pages_label));
 }
 
 void ui_save_position(void)
@@ -784,8 +779,24 @@ void ui_handle_pointer(int x, int y)
                 toggle_night();
             else if (hit == BAR_HIT_LIGHT)
                 toggle_light();
-            else if (hit == BAR_HIT_OPTIONS || hit == BAR_HIT_PAGES) {
-                /* Options + page/progress share the settings/options menu. */
+            else if (hit == BAR_HIT_PAGES) {
+                int fg = g_app.cfg.night ? WHITE : BLACK;
+                int bg = g_app.cfg.night ? BLACK : WHITE;
+                const reader_engine *eng = engine_active();
+
+                g_app.cfg.bar_progress =
+                    (g_app.cfg.bar_progress + 1) % BAR_PROGRESS_COUNT;
+                config_save(&g_app.cfg);
+                update_bar_label();
+                SetFont(g_app.font_bar, fg);
+                bar_draw(&g_app.bar, g_app.clock, g_app.cfg.night, g_app.light_on,
+                         g_app.light_available,
+                         eng ? eng->current_page() : 0,
+                         eng ? eng->page_count() : 0, fg, bg,
+                         g_app.bar_pages_label);
+                refresh_partial(g_app.bar.pages_x, 0, g_app.bar.pages_w,
+                                g_app.bar.height);
+            } else if (hit == BAR_HIT_OPTIONS) {
                 const reader_engine *eng = engine_active();
                 if (eng)
                     g_app.goto_page_tmp = eng->current_page();

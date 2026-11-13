@@ -91,11 +91,43 @@ static void test_atomic_rename(void)
     printf("atomic rename OK\n");
 }
 
+static void test_bar_format_progress(void)
+{
+    char buf[64];
+
+    bar_format_progress(BAR_PROGRESS_PAGES, 254, 407, -1, buf, sizeof(buf));
+    assert(strcmp(buf, "254/407") == 0);
+
+    bar_format_progress(BAR_PROGRESS_PERCENT, 254, 407, -1, buf, sizeof(buf));
+    assert(strcmp(buf, "62%") == 0);
+
+    bar_format_progress(BAR_PROGRESS_PERCENT, 0, 0, -1, buf, sizeof(buf));
+    assert(strcmp(buf, "0%") == 0);
+
+    bar_format_progress(BAR_PROGRESS_ETA, 254, 407, -1, buf, sizeof(buf));
+    assert(strcmp(buf, "~--") == 0);
+
+    bar_format_progress(BAR_PROGRESS_ETA, 254, 407, 59, buf, sizeof(buf));
+    assert(strcmp(buf, "<1m") == 0);
+
+    bar_format_progress(BAR_PROGRESS_ETA, 254, 407, 61, buf, sizeof(buf));
+    assert(strcmp(buf, "~2m") == 0);
+
+    bar_format_progress(BAR_PROGRESS_ETA, 254, 407, 240, buf, sizeof(buf));
+    assert(strcmp(buf, "~4m") == 0);
+
+    bar_format_progress(BAR_PROGRESS_ETA, 254, 407, 4800, buf, sizeof(buf));
+    assert(strcmp(buf, "~1h20m") == 0);
+
+    printf("bar format progress OK\n");
+}
+
 int main(void)
 {
     test_clamp();
     test_bar_hits();
     test_atomic_rename();
+    test_bar_format_progress();
     printf("all host tests passed\n");
     return 0;
 }

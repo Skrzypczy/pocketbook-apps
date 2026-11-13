@@ -20,4 +20,12 @@ if %ERR% NEQ 0 (
   echo frontlight_peek host tests FAILED
   exit /b %ERR%
 )
+
+echo Running Reader C host tests...
+docker run --rm -v "%REPO_ROOT%:/src" -w /src/apps/Reader/tests gcc:14-bookworm bash -c "gcc -DHOST_TEST -I. -I.. test_host.c ../bar.c -o /tmp/test_host && /tmp/test_host"
+set ERR=%ERRORLEVEL%
+if %ERR% NEQ 0 (
+  echo Reader C host tests FAILED
+  exit /b %ERR%
+)
 exit /b 0

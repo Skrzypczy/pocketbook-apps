@@ -13,10 +13,11 @@ Minimal ebook reader with a top bar and one settings page. Reflowable books use 
 | Control | Action |
 |---------|--------|
 | Clock | Time only (not tappable) |
+| Progress | Tap cycles pages, percent, time left |
+| Options | Opens settings |
 | Day / Night | Invert page colors + full refresh |
 | Light on / off | Frontlight toggle (brightness remembered) |
-| Books | Return to home |
-| `page / total` | Opens settings |
+| Sleep | Suspend / keylock |
 
 Page body: left third = previous page, right two-thirds = next. Hardware NEXT/PREV keys do the same. BACK saves position and returns to Home.
 
