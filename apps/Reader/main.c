@@ -6,6 +6,7 @@
 #include "layout.h"
 #include "debug.h"
 #include "extensions.h"
+#include "keymap.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -644,22 +645,15 @@ void ui_open_book(const char *path)
         boot_marker("naskilla: crash_test");
         *(volatile int *)0 = 1;
     }
+    keymap_reload();
     boot_marker("naskilla: before first draw");
     ui_draw();
     boot_marker("naskilla: first draw done");
 }
 
-static void turn_page(int next)
+static void note_page_turn(void)
 {
-    const reader_engine *eng = engine_active();
-    int rc;
-    unsigned long t;
-    if (!eng || refresh_busy())
-        return;
-    rc = next ? eng->next() : eng->prev();
-    if (rc != 0)
-        return;
-    t = now_ms();
+    unsigned long t = now_ms();
     if (g_app.last_turn_ms > 0 && t > g_app.last_turn_ms) {
         int gap = (int)(t - g_app.last_turn_ms);
         if (gap > 200 && gap < 600000) {
@@ -670,8 +664,88 @@ static void turn_page(int next)
         }
     }
     g_app.last_turn_ms = t;
+}
+
+static void turn_page(int next)
+{
+    const reader_engine *eng = engine_active();
+    int rc;
+    if (!eng || refresh_busy())
+        return;
+    rc = next ? eng->next() : eng->prev();
+    if (rc != 0)
+        return;
+    note_page_turn();
     ui_save_position();
     draw_reading(0);
+}
+
+static void go_to_page_draw(int page)
+{
+    const reader_engine *eng = engine_active();
+    int pages;
+    if (!eng || refresh_busy())
+        return;
+    pages = eng->page_count();
+    if (pages < 1)
+        return;
+    if (page < 1)
+        page = 1;
+    if (page > pages)
+        page = pages;
+    if (eng->go_to(page) != 0)
+        return;
+    note_page_turn();
+    ui_save_position();
+    draw_reading(0);
+}
+
+static void run_key_action(keymap_action act)
+{
+    const reader_engine *eng;
+    int pages;
+
+    if (act == KA_NONE)
+        return;
+    switch (act) {
+    case KA_NEXT:
+        turn_page(1);
+        break;
+    case KA_PREV:
+        turn_page(0);
+        break;
+    case KA_NEXT10:
+        eng = engine_active();
+        if (!eng)
+            return;
+        go_to_page_draw(eng->current_page() + 10);
+        break;
+    case KA_PREV10:
+        eng = engine_active();
+        if (!eng)
+            return;
+        go_to_page_draw(eng->current_page() - 10);
+        break;
+    case KA_FIRST:
+        go_to_page_draw(1);
+        break;
+    case KA_LAST:
+        eng = engine_active();
+        if (!eng)
+            return;
+        pages = eng->page_count();
+        if (pages > 0)
+            go_to_page_draw(pages);
+        break;
+    case KA_CONTENTS:
+        ui_remember_jump();
+        contents_load();
+        g_app.screen = SCREEN_CONTENTS;
+        ui_draw();
+        break;
+    default:
+        break;
+    }
 }
 
 static void toggle_night(void)
@@ -822,42 +896,102 @@ void ui_handle_pointer(int x, int y)
     }
 }
 
-void ui_handle_key(int key)
+static int g_key_held = -1;
+static int g_key_ran_on_press;
+
+static void handle_key_back(void)
 {
+    if (g_app.screen == SCREEN_READING) {
+        ui_save_position();
+        config_save(&g_app.cfg);
+        engine_close();
+        ui_show_home();
+    } else if (g_app.screen == SCREEN_FONTS) {
+        g_app.screen = SCREEN_SETTINGS;
+        ui_draw();
+    } else if (g_app.screen == SCREEN_SETTINGS ||
+               g_app.screen == SCREEN_CONTENTS) {
+        g_app.screen = SCREEN_READING;
+        ui_draw();
+    } else if (g_app.screen == SCREEN_BROWSE ||
+               g_app.screen == SCREEN_MESSAGE ||
+               g_app.screen == SCREEN_SUGGEST_ASK ||
+               g_app.screen == SCREEN_SUGGEST_RESULTS) {
+        ui_show_home();
+    } else if (g_app.screen == SCREEN_HOME && g_app.books_from_options) {
+        g_app.books_from_options = 0;
+        g_app.screen = SCREEN_SETTINGS;
+        ui_draw();
+    } else {
+        CloseApp();
+    }
+}
+
+void ui_handle_key_event(int type, int key, int par2)
+{
+    keymap_action act;
+
     if (refresh_busy())
         return;
-    if (key == KEY_BACK) {
-        if (g_app.screen == SCREEN_READING) {
-            ui_save_position();
-            config_save(&g_app.cfg);
-            engine_close();
-            ui_show_home();
-        } else if (g_app.screen == SCREEN_FONTS) {
-            g_app.screen = SCREEN_SETTINGS;
-            ui_draw();
-        } else if (g_app.screen == SCREEN_SETTINGS ||
-                   g_app.screen == SCREEN_CONTENTS) {
-            g_app.screen = SCREEN_READING;
-            ui_draw();
-        } else if (g_app.screen == SCREEN_BROWSE ||
-                   g_app.screen == SCREEN_MESSAGE ||
-                   g_app.screen == SCREEN_SUGGEST_ASK ||
-                   g_app.screen == SCREEN_SUGGEST_RESULTS) {
-            ui_show_home();
-        } else if (g_app.screen == SCREEN_HOME && g_app.books_from_options) {
-            g_app.books_from_options = 0;
-            g_app.screen = SCREEN_SETTINGS;
-            ui_draw();
+
+    if (type == EVT_KEYPRESS && key == KEY_BACK) {
+        handle_key_back();
+        return;
+    }
+
+    if (g_app.screen != SCREEN_READING)
+        return;
+
+    if (type == EVT_KEYPRESS) {
+        if (keymap_has_long(key)) {
+            reader_log("key: type=%d code=0x%x par2=%d -> act=defer",
+                       type, key, par2);
+            g_key_held = key;
+            g_key_ran_on_press = 0;
         } else {
-            CloseApp();
+            act = keymap_lookup(key, 0);
+            reader_log("key: type=%d code=0x%x par2=%d -> act=%d",
+                       type, key, par2, (int)act);
+            run_key_action(act);
+            g_key_held = key;
+            g_key_ran_on_press = 1;
         }
         return;
     }
-    if (g_app.screen == SCREEN_READING) {
-        if (key == KEY_NEXT)
-            turn_page(1);
-        else if (key == KEY_PREV)
-            turn_page(0);
+
+    if (type == EVT_KEYRELEASE) {
+        if (g_key_held == key && g_key_ran_on_press) {
+            g_key_held = -1;
+            g_key_ran_on_press = 0;
+            return;
+        }
+        if (par2 == 0) {
+            act = keymap_lookup(key, 0);
+            reader_log("key: type=%d code=0x%x par2=%d -> act=%d",
+                       type, key, par2, (int)act);
+            run_key_action(act);
+        } else {
+            reader_log("key: type=%d code=0x%x par2=%d -> act=clear",
+                       type, key, par2);
+        }
+        g_key_held = -1;
+        g_key_ran_on_press = 0;
+        return;
+    }
+
+    if (type == EVT_KEYREPEAT) {
+        act = keymap_lookup(key, 1);
+        if (par2 == 1 ||
+            (par2 > 1 && keymap_action_repeatable(act))) {
+            reader_log("key: type=%d code=0x%x par2=%d -> act=%d",
+                       type, key, par2, (int)act);
+            run_key_action(act);
+        } else {
+            reader_log("key: type=%d code=0x%x par2=%d -> act=skip",
+                       type, key, par2);
+        }
+        g_key_held = -1;
+        g_key_ran_on_press = 0;
     }
 }
 
@@ -973,6 +1107,7 @@ void ui_shutdown(void)
     config_save(&g_app.cfg);
     engine_close();
     engine_global_shutdown();
+    keymap_unload();
     free(g_app.page_buf);
     g_app.page_buf = NULL;
     free(g_app.books);
@@ -1024,6 +1159,7 @@ static int main_handler(int type, int par1, int par2)
         reader_log("evt SHOW fl=%d on=%d", GetFrontlightState(), frontlight_is_on());
         sync_light_ui_from_device();
         frontlight_peek_on_show();
+        keymap_reload();
         if (g_launch_path[0] && !g_opened_launch) {
             g_opened_launch = 1;
             g_resumed_last = 1;
@@ -1045,6 +1181,7 @@ static int main_handler(int type, int par1, int par2)
         reader_log("evt FOREGROUND fl=%d on=%d", GetFrontlightState(), frontlight_is_on());
         sync_light_ui_from_device();
         frontlight_peek_on_show();
+        keymap_reload();
         break;
     case EVT_HIDE:
         ui_on_hide();
@@ -1056,7 +1193,13 @@ static int main_handler(int type, int par1, int par2)
         ui_handle_pointer(par1, par2);
         break;
     case EVT_KEYPRESS:
-        ui_handle_key(par1);
+    case EVT_KEYRELEASE:
+    case EVT_KEYREPEAT:
+        ui_handle_key_event(type, par1, par2);
+        break;
+    case EVT_NEXTPAGE:
+    case EVT_PREVPAGE:
+        reader_log("key: page-evt type=%d (ignored)", type);
         break;
     case EVT_ORIENTATION:
         ui_on_orientation();

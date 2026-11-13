@@ -19,7 +19,7 @@ Minimal ebook reader with a top bar and one settings page. Reflowable books use 
 | Light on / off | Frontlight toggle (brightness remembered) |
 | Sleep | Suspend / keylock |
 
-Page body: left third = previous page, right two-thirds = next. Hardware NEXT/PREV keys do the same. BACK saves position and returns to Home.
+Page body: left third = previous page, right two-thirds = next. Keys follow the PocketBook key mapping (Settings > Key mapping), including a Bluetooth remote. BACK saves position and returns to Home.
 
 ### Settings
 

@@ -29,8 +29,10 @@ $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/frontlight.c -o $OUT/frontlight.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/library.c -o $OUT/library.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/settings.c -o $OUT/settings.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/contents.c -o $OUT/contents.o
+$CC $CFLAGS $DEFS $INC -c /src/apps/Reader/fonts.c -o $OUT/fonts.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/suggest.c -o $OUT/suggest.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/extensions.c -o $OUT/extensions.o
+$CC $CFLAGS $DEFS $INC -c /src/apps/Reader/keymap.c -o $OUT/keymap.o
 $CC $CFLAGS $DEFS $INC -c /src/apps/Reader/engine_select.c -o $OUT/engine_select.o
 $CXX $CXXFLAGS $DEFS $INC -c /src/apps/Reader/engine_crengine.cpp -o $OUT/engine_crengine.o
 $CXX $CXXFLAGS $DEFS $INC -c /src/apps/Reader/engine_mupdf.cpp -o $OUT/engine_mupdf.o
@@ -40,7 +42,7 @@ echo "=== Linking NaSkilla.app (static png/jpeg/freetype/z) ==="
 # Keep curl+inkview dynamic (same as Chef.app which already runs on this device).
 $CXX -o /src/build/NaSkilla.app \
   $OUT/main.o $OUT/bar.o $OUT/config.o $OUT/refresh.o $OUT/frontlight.o \
-  $OUT/library.o $OUT/settings.o $OUT/contents.o $OUT/suggest.o $OUT/extensions.o \
+  $OUT/library.o $OUT/settings.o $OUT/contents.o $OUT/fonts.o $OUT/suggest.o $OUT/extensions.o $OUT/keymap.o \
   $OUT/engine_select.o $OUT/engine_crengine.o $OUT/engine_mupdf.o \
   -Wl,--start-group \
   $OUT/crengine/libcrengine.a $OUT/crengine/chmlib/libchmlib.a $OUT/crengine/antiword/libantiword.a \

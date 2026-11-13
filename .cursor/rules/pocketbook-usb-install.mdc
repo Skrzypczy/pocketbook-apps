@@ -1,0 +1,14 @@
+---
+description: When to copy apps to PocketBook USB and when to safely eject
+alwaysApply: true
+---
+
+# PocketBook USB install / eject
+
+After building and copying `.app` files to the device:
+
+- **Leave mounted** during debug / iterative rebuild–copy loops, or when the user did not ask to check on-device yet.
+- **Eject** only when the user needs to launch/test the app on the device (USB Drive mode blocks normal use until ejected), or when they explicitly ask to disconnect / rozłącz.
+- Prefer the project skill `pocketbook-device-install` for connect, detect drive, copy paths, logs, and eject commands.
+- Do not skip copy verification; do not leave half-copied `.app` files.
+- Never force-eject if the user says they are still reading logs or editing `debug.cfg` over USB.

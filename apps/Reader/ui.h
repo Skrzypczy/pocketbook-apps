@@ -99,7 +99,7 @@ void ui_open_book(const char *path);
 void ui_open_next_in_series(void);
 void ui_draw(void);
 void ui_handle_pointer(int x, int y);
-void ui_handle_key(int key);
+void ui_handle_key_event(int type, int key, int par2);
 void ui_on_show(void);
 void ui_on_hide(void);
 void ui_on_orientation(void);
